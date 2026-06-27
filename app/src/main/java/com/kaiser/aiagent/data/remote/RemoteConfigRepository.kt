@@ -82,8 +82,11 @@ class RemoteConfigRepository(private val context: Context) {
     }
 
     companion object {
-        // Default placeholder — the user is expected to host a real file.
-        const val DEFAULT_URL = "https://example.com/aiagent-config.json"
+        // Live remote config served from the persolist-updates repo (raw URL —
+        // always reachable, no GitHub Pages propagation delay). Editable from
+        // Settings; this is just the v0.1 default.
+        const val DEFAULT_URL =
+            "https://raw.githubusercontent.com/Kaiser0733/persolist-updates/main/aiagent-config.json"
     }
 }
 

@@ -29,9 +29,9 @@
     <string name="settings_auto_update_subtitle">Periodically check GitHub for new releases</string>
     <string name="settings_remote_config">Remote Configuration</string>
     <string name="settings_remote_config_url">Remote config URL</string>
-    <string name="settings_remote_config_url_default">https://example.com/aiagent-config.json</string>
+    <string name="settings_remote_config_url_default">https://raw.githubusercontent.com/Kaiser0733/persolist-updates/main/aiagent-config.json</string>
     <string name="settings_updater_repo">Updater repository</string>
-    <string name="settings_updater_repo_default">Kaiser0733/Update-mobile-agent</string>
+    <string name="settings_updater_repo_default">Kaiser0733/AndroidAIAgent</string>
     <string name="settings_debug">Debug</string>
     <string name="settings_view_logs">View local logs</string>
     <string name="settings_view_logs_subtitle">Open the in-app log viewer</string>
@@ -40,7 +40,7 @@
     <string name="about_version_label">Version</string>
     <string name="about_description">Android AI Agent is a long-term personal assistant project for Android. This is the v0.1 foundation release — the agent itself is not yet functional. The release focuses on a stable, expandable architecture: application shell, update system, remote configuration, logging, and stub modules for future expansion.</string>
     <string name="about_repo_label">Repository</string>
-    <string name="about_repo_value">github.com/Kaiser0733/Update-mobile-agent</string>
+    <string name="about_repo_value">github.com/Kaiser0733/AndroidAIAgent</string>
     <string name="about_license_label">License</string>
     <string name="about_license_value">MIT (personal use)</string>
 

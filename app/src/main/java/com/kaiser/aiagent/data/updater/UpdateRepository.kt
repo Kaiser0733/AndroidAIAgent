@@ -196,7 +196,11 @@ class UpdateRepository(
     }
 
     companion object {
-        const val DEFAULT_REPO = "Kaiser0733/Update-mobile-agent"
+        // Default GitHub repository to query for releases. Editable from
+        // Settings. Points to the dedicated AndroidAIAgent repo (separate
+        // from the persolist-updates repo, which only hosts the remote
+        // config JSON).
+        const val DEFAULT_REPO = "Kaiser0733/AndroidAIAgent"
     }
 }
 

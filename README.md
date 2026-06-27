@@ -2,6 +2,9 @@
 
 **Personal-use Android AI Agent — v0.1 foundation**
 
+Repository: https://github.com/Kaiser0733/AndroidAIAgent
+Remote config (live): https://raw.githubusercontent.com/Kaiser0733/persolist-updates/main/aiagent-config.json
+
 This repository is the long-term home of a personal Android AI Agent. The
 v0.1 release is intentionally **foundation-only**: it ships a stable
 architecture (application shell, update system, remote configuration,
