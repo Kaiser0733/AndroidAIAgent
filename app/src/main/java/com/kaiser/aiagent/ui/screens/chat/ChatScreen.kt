@@ -48,12 +48,22 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.remember
 import com.kaiser.aiagent.data.chat.MessageRole
+import com.kaiser.aiagent.domain.tools.PermissionManager
 import org.koin.androidx.compose.koinViewModel
+import org.koin.core.context.GlobalContext
 
 /**
  * Full chat surface. Renders a message list + input bar + top app bar
  * with new / delete actions. Streams assistant responses in place.
+ *
+ * v0.4: observes [PermissionManager.pendingConfirmation] and shows an
+ * AlertDialog whenever a CONFIRMATION_REQUIRED tool is requested. The
+ * user's Approve/Deny decision resolves the deferred and the agent
+ * loop resumes.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -66,6 +76,9 @@ fun ChatScreen(
     var input by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val clipboard = LocalClipboardManager.current
+    // Resolve the PermissionManager singleton from Koin's global context.
+    val permissionManager: PermissionManager = remember { GlobalContext.get().get() }
+    val pendingConfirmation by permissionManager.pendingConfirmation.collectAsState()
 
     // Auto-scroll to bottom when messages change or streaming text grows.
     LaunchedEffect(state.messages.size, state.streamingText) {
@@ -167,6 +180,57 @@ fun ChatScreen(
                 enabled = !state.busy
             )
         }
+    }
+
+    // v0.4: Confirmation dialog for CONFIRMATION_REQUIRED tools.
+    // Shown whenever PermissionManager.pendingConfirmation is non-null.
+    pendingConfirmation?.let { pc ->
+        AlertDialog(
+            onDismissRequest = { permissionManager.deny() },
+            title = { Text("Permission required") },
+            text = {
+                Column {
+                    Text(
+                        text = "The agent wants to run:",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = pc.toolName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = pc.toolDescription,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Arguments:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = pc.argumentsJson,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { permissionManager.approve() }) {
+                    Text("Approve")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { permissionManager.deny() }) {
+                    Text("Deny")
+                }
+            }
+        )
     }
 }
 

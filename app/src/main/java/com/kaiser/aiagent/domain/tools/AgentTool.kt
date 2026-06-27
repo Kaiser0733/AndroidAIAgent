@@ -5,11 +5,16 @@ package com.kaiser.aiagent.domain.tools
  * `com.kaiser.aiagent.tools.*` and are registered with [ToolRegistry]
  * at app startup.
  *
+ * v0.4 changes:
+ *  - [execute] now returns the new [ToolResult] shape (success/data/error/metadata).
+ *  - Added [permissionLevel] — every tool must declare how dangerous it is.
+ *    The [PermissionManager] enforces this before [execute] is called.
+ *
  * SECURITY: tools execute on the device with the app's permissions.
  * Be conservative — implement only safe, read-only, side-effect-free
- * tools unless you have a strong reason to do otherwise. v0.3 ships
- * three demo tools (get_time, app_info, device_info) that are all
- * read-only.
+ * tools unless you have a strong reason to do otherwise. Tools that
+ * modify the file system or any persisted state MUST declare
+ * [ToolPermissionLevel.CONFIRMATION_REQUIRED].
  *
  * The [arguments] parameter is a JSON-encoded string. Tools are
  * responsible for parsing it themselves (typically via
@@ -32,10 +37,19 @@ interface AgentTool {
         get() = "{}"
 
     /**
-     * Executes the tool and returns a string result. The result is
-     * always a string — structured data should be JSON-encoded by the
-     * tool. Throwing is allowed; the [ToolExecutor] will catch and
-     * surface the error to the model as a tool-result message.
+     * Permission level required to execute this tool. v0.4 default is
+     * [ToolPermissionLevel.SAFE] for backward compatibility with v0.3
+     * tools. New tools that modify state MUST override this to
+     * [ToolPermissionLevel.CONFIRMATION_REQUIRED].
      */
-    suspend fun execute(arguments: String): String
+    val permissionLevel: ToolPermissionLevel
+        get() = ToolPermissionLevel.SAFE
+
+    /**
+     * Executes the tool and returns a [ToolResult]. The [PermissionManager]
+     * calls this only after checking [permissionLevel]. Tools should
+     * throw on unexpected failures — the [ToolExecutor] catches and
+     * surfaces them as a failed [ToolResult].
+     */
+    suspend fun execute(arguments: String): ToolResult
 }

@@ -108,6 +108,25 @@ class MemoryRepository(private val context: Context) {
     fun byType(type: String): List<MemoryEntry> =
         _entries.value.filter { it.type == type }
 
+    /**
+     * v0.4: keyword search. Returns entries whose content, type, source,
+     * or tags contain the [query] (case-insensitive). Empty query returns
+     * all entries (capped at [limit]).
+     *
+     * NOT embeddings-based — just substring matching. Good enough for
+     * short personal memory stores; v0.5+ can add semantic search.
+     */
+    fun search(query: String, limit: Int = 50): List<MemoryEntry> {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) return _entries.value.take(limit)
+        return _entries.value.filter { entry ->
+            entry.content.lowercase().contains(q) ||
+                entry.type.lowercase().contains(q) ||
+                entry.source.lowercase().contains(q) ||
+                entry.tags.any { it.lowercase().contains(q) }
+        }.take(limit)
+    }
+
     /** Deletes the entry with the given id. Returns true if deleted. */
     suspend fun delete(id: String): Boolean {
         val before = _entries.value.size

@@ -6,8 +6,14 @@ package com.kaiser.aiagent.domain.tools
  * the registry when (a) building the system prompt (so the model knows
  * what tools exist) and (b) executing a tool call.
  *
- * The registry is intentionally simple — a map by name. v0.4+ can add
- * categories, enable/disable flags, and per-tool permissions.
+ * v0.4 additions:
+ *  - [describeForPrompt] now includes the permission level per tool
+ *    so the model understands which tools need confirmation.
+ *  - [stats] returns a count by permission level for the Debug screen.
+ *  - Tools with [ToolPermissionLevel.BLOCKED] are still registered (so
+ *    the Debug screen can show them) but the ToolExecutor will refuse
+ *    to execute them. This lets the user see "yes, the codebase knows
+ *    about DeleteFileTool, but it's blocked by policy".
  */
 class ToolRegistry {
 
@@ -31,19 +37,7 @@ class ToolRegistry {
     /**
      * Renders a human-readable catalog of all registered tools, suitable
      * for embedding in the system prompt so the model knows what it can
-     * call. Example output:
-     *
-     * ```
-     * Available tools:
-     *
-     * 1. get_time
-     *    Returns the current local time.
-     *    Arguments: {}
-     *
-     * 2. app_info
-     *    Returns the app version and build number.
-     *    Arguments: {}
-     * ```
+     * call. v0.4 includes the permission level per tool.
      */
     fun describeForPrompt(): String {
         if (tools.isEmpty()) return "No tools are available."
@@ -51,11 +45,35 @@ class ToolRegistry {
             appendLine("Available tools:")
             appendLine()
             tools.values.forEachIndexed { i, tool ->
-                appendLine("${i + 1}. ${tool.name}")
+                appendLine("${i + 1}. ${tool.name} (${tool.permissionLevel.name})")
                 appendLine("   ${tool.description}")
                 appendLine("   Arguments: ${tool.argumentsSchema}")
                 appendLine()
             }
+            appendLine("Permission levels:")
+            appendLine("  SAFE — runs immediately.")
+            appendLine("  CONFIRMATION_REQUIRED — the user must approve before the tool runs.")
+            appendLine("  BLOCKED — the tool is forbidden (deletion, moving, renaming, APK install,")
+            appendLine("            shell execution, messaging, app control, accessibility).")
+            appendLine("            If the user asks for any of these, refuse politely and explain why.")
         }
     }
+
+    /** Returns a count of registered tools grouped by permission level. */
+    fun stats(): ToolStats {
+        val byLevel = tools.values.groupBy { it.permissionLevel }
+        return ToolStats(
+            total = tools.size,
+            safe = byLevel[ToolPermissionLevel.SAFE]?.size ?: 0,
+            confirmationRequired = byLevel[ToolPermissionLevel.CONFIRMATION_REQUIRED]?.size ?: 0,
+            blocked = byLevel[ToolPermissionLevel.BLOCKED]?.size ?: 0
+        )
+    }
+
+    data class ToolStats(
+        val total: Int,
+        val safe: Int,
+        val confirmationRequired: Int,
+        val blocked: Int
+    )
 }

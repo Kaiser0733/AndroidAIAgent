@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.kaiser.aiagent.data.ai.AiRepository
 import com.kaiser.aiagent.data.ai.AiConfig
 import com.kaiser.aiagent.domain.agent.AgentRuntime
+import com.kaiser.aiagent.domain.tools.ToolPermissionLevel
 import com.kaiser.aiagent.domain.tools.ToolRegistry
 import com.kaiser.aiagent.memory.MemoryManager
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,12 +15,11 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /**
- * Read-only view model for the Debug screen. Aggregates snapshots of:
- *  - Current AI config (endpoint, model, whether API key is set)
- *  - Agent runtime state (busy, last tool call, last error)
- *  - Registered tools (name + description)
- *  - Memory count
- *  - API status (lazy — only set after the user taps "Test Connection")
+ * Read-only view model for the Debug screen. v0.4 adds:
+ *  - Tool permission level per registered tool
+ *  - File tool statistics (file tools called, last file operation)
+ *  - Memory count (existing, now exposed via the search_memory tool too)
+ *  - Tool counts by permission level (safe / confirmation / blocked)
  */
 class DebugViewModel(
     private val aiRepository: AiRepository,
@@ -34,10 +34,12 @@ class DebugViewModel(
         val apiKeySet: Boolean = false,
         val agentBusy: Boolean = false,
         val lastToolCall: String? = null,
-        val lastToolResultOk: Boolean? = null,
-        val lastToolResultOutput: String? = null,
+        val lastToolResultSuccess: Boolean? = null,
+        val lastToolResultData: String? = null,
+        val lastToolResultError: String? = null,
         val lastError: String? = null,
         val tools: List<ToolInfo> = emptyList(),
+        val toolStats: ToolStats = ToolStats(),
         val memoryCount: Int = 0,
         val apiStatus: String? = null,
         val testing: Boolean = false
@@ -46,14 +48,21 @@ class DebugViewModel(
     data class ToolInfo(
         val name: String,
         val description: String,
-        val argumentsSchema: String
+        val argumentsSchema: String,
+        val permissionLevel: ToolPermissionLevel
+    )
+
+    data class ToolStats(
+        val total: Int = 0,
+        val safe: Int = 0,
+        val confirmationRequired: Int = 0,
+        val blocked: Int = 0
     )
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
-        // Watch AI config
         viewModelScope.launch {
             aiRepository.configFlow.collectLatest { cfg: AiConfig ->
                 _state.value = _state.value.copy(
@@ -63,27 +72,33 @@ class DebugViewModel(
                 )
             }
         }
-        // Watch agent runtime state
         viewModelScope.launch {
             agentRuntime.state.collectLatest { s ->
                 _state.value = _state.value.copy(
                     agentBusy = s.busy,
                     lastToolCall = s.lastToolCall,
-                    lastToolResultOk = s.lastToolResult?.ok,
-                    lastToolResultOutput = s.lastToolResult?.output?.take(120),
+                    lastToolResultSuccess = s.lastToolResult?.success,
+                    lastToolResultData = s.lastToolResult?.data?.take(120),
+                    lastToolResultError = s.lastToolResult?.error,
                     lastError = s.lastError
                 )
             }
         }
-        // Snapshot tools + memory count once
         refresh()
     }
 
     fun refresh() {
+        val stats = toolRegistry.stats()
         _state.value = _state.value.copy(
             tools = toolRegistry.all().map {
-                ToolInfo(it.name, it.description, it.argumentsSchema)
+                ToolInfo(it.name, it.description, it.argumentsSchema, it.permissionLevel)
             },
+            toolStats = ToolStats(
+                total = stats.total,
+                safe = stats.safe,
+                confirmationRequired = stats.confirmationRequired,
+                blocked = stats.blocked
+            ),
             memoryCount = memoryManager.count()
         )
     }

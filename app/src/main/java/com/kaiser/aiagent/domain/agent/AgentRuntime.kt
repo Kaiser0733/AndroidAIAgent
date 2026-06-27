@@ -22,20 +22,28 @@ import timber.log.Timber
  *   1. Build a context (system prompt + history + new user message).
  *   2. Stream the model's response.
  *   3. When the response completes, scan it for a tool-call request.
- *   4. If a tool call is found: execute it, append the tool result to
- *      the context as a tool-role message, and loop back to step 2.
+ *   4. If a tool call is found: execute it (going through the
+ *      PermissionManager inside [ToolExecutor]), append the tool
+ *      result to the context, and loop back to step 2.
  *   5. If no tool call is found: the response is final; return it.
  *
  * The runtime is UI-agnostic — it does not import any Compose types.
  * It exposes a [StateFlow]<[AgentState]> for the UI to observe and
  * calls back via lambdas for streaming deltas and final results.
  *
- * v0.3 caps the number of tool iterations per turn at 5 to prevent
- * infinite loops. v0.4 can make this configurable.
+ * v0.4 changes:
+ *  - Permission enforcement moved INTO ToolExecutor (which delegates
+ *    to PermissionManager). The runtime no longer needs a separate
+ *    onConfirmationRequired callback; the UI observes
+ *    PermissionManager.pendingConfirmation instead.
+ *  - ToolResult uses the new success/data/error/metadata shape.
+ *  - Tool calls pass conversationId through to ToolExecutor so the
+ *    PermissionManager can include it in the pending-confirmation
+ *    request (useful if the UI wants to display the conversation title
+ *    alongside the confirmation dialog).
  *
- * @property repository the AI HTTP client wrapper.
- * @property toolRegistry registered tools (used to build the prompt).
- * @property toolExecutor runs tool calls.
+ * v0.3 caps the number of tool iterations per turn at 5 to prevent
+ * infinite loops.
  */
 class AgentRuntime(
     private val repository: AiRepository,
@@ -50,12 +58,15 @@ class AgentRuntime(
     val state: StateFlow<AgentState> = _state.asStateFlow()
 
     /**
-     * Runs a single agent turn:
-     *  - [history] is the prior conversation (without the new user message).
-     *  - [userMessage] is the new user input.
-     *  - [onDelta] is called for each streamed text fragment (can be empty).
-     *  - [onFinal] is called with the full assistant response when the
-     *    loop completes (whether or not tools were called).
+     * Runs a single agent turn.
+     *
+     * @param history prior conversation (without the new user message).
+     * @param userMessage the new user input.
+     * @param conversationId optional — passed to ToolExecutor for the
+     *   permission confirmation flow.
+     * @param onDelta called for each streamed text fragment.
+     * @param onFinal called with the full assistant response when the
+     *   loop completes (whether or not tools were called).
      *
      * On error, [onFinal] is NOT called; instead, the error is written
      * to [state.lastError] and re-thrown to the caller.
@@ -63,6 +74,7 @@ class AgentRuntime(
     suspend fun runTurn(
         history: List<AiMessage>,
         userMessage: String,
+        conversationId: String? = null,
         onDelta: (String) -> Unit,
         onFinal: (String) -> Unit
     ) {
@@ -77,7 +89,7 @@ class AgentRuntime(
         _state.value = AgentState(busy = true, streamingText = "")
 
         try {
-            val finalText = runLoop(context, onDelta)
+            val finalText = runLoop(context, conversationId, onDelta)
             _state.value = AgentState.IDLE
             onFinal(finalText)
         } catch (t: Throwable) {
@@ -94,29 +106,22 @@ class AgentRuntime(
      */
     private suspend fun runLoop(
         context: AgentContext,
+        conversationId: String?,
         onDelta: (String) -> Unit
     ): String {
         var iteration = 0
         while (true) {
             if (iteration >= context.maxToolIterations) {
                 Timber.w("Hit max tool iterations (%d); stopping", context.maxToolIterations)
-                // v0.3.5: smarter fallback. If a tool WAS successfully
-                // called (we have a lastToolResult), surface that. If no
-                // tool was called but the model produced text, return the
-                // text — it may be a usable answer even without tools.
-                // Only show the "couldn't complete" error when we truly
-                // have nothing useful.
                 val lastResult = _state.value.lastToolResult
                 val lastText = _state.value.streamingText
                 return when {
-                    lastResult != null && lastResult.ok ->
-                        "Based on the tool result: ${lastResult.output}"
-                    lastText.isNotBlank() ->
-                        lastText  // the model's text response, even if no tool ran
-                    else ->
-                        "I attempted to use a tool but couldn't complete the request. " +
-                            "Please try rephrasing your question, or ask me something that " +
-                            "doesn't require a tool."
+                    lastResult != null && lastResult.success ->
+                        "Based on the tool result: ${lastResult.data}"
+                    lastText.isNotBlank() -> lastText
+                    else -> "I attempted to use a tool but couldn't complete the request. " +
+                        "Please try rephrasing your question, or ask me something that " +
+                        "doesn't require a tool."
                 }
             }
 
@@ -134,19 +139,12 @@ class AgentRuntime(
 
             val responseText = accumulator.toString().trim()
             Timber.i("Model iteration %d produced %d chars", iteration, responseText.length)
-            // v0.3.5: log every model response verbatim so we can
-            // diagnose parser failures ("Last tool call: (none)") by
-            // reading update.log. Truncate to 1000 chars to keep the
-            // log readable.
             logRepository?.appendUpdateLog(
                 "Model iter $iteration (${responseText.length} chars): " +
                     responseText.take(1000).replace("\n", "\\n")
             )
 
-            // v0.3.7: parrot detection. If the model echoes back a prior
-            // wrapped assistant message (e.g. "[Tool call executed: X]")
-            // or a prior tool-result directive, it's stuck in a loop.
-            // Force a stronger nudge before the next iteration.
+            // Parrot detection.
             if (iteration > 0 && looksLikeParrot(responseText)) {
                 Timber.w("Parrot detected on iteration %d: %s", iteration, responseText.take(100))
                 logRepository?.appendUpdateLog("PARROT DETECTED — adding stronger nudge")
@@ -169,22 +167,12 @@ class AgentRuntime(
                     return responseText
                 }
                 is ToolCallParseResult.Malformed -> {
-                    // Treat malformed calls as a tool error so the model
-                    // can recover on the next iteration.
                     val result = ToolResult(
-                        tool = "(malformed)",
-                        ok = false,
-                        output = "",
-                        errorMessage = "Malformed tool call: ${parsed.error}. Raw: ${parsed.raw.take(200)}",
-                        durationMs = 0
+                        success = false,
+                        data = "",
+                        error = "Malformed tool call: ${parsed.error}. Raw: ${parsed.raw.take(200)}"
                     )
                     recordToolCall("(malformed)", result)
-                    // CRITICAL: many OpenAI-compatible providers (Groq,
-                    // OpenAI itself, etc.) reject assistant messages that
-                    // contain only raw JSON — the API expects assistant
-                    // messages to be natural-language text. Wrap the
-                    // tool-call JSON in plain prose so history replay
-                    // doesn't trip provider validation (400 SSE errors).
                     context.messages.add(
                         AiMessage(
                             role = "assistant",
@@ -203,45 +191,25 @@ class AgentRuntime(
                 }
                 is ToolCallParseResult.Found -> {
                     val call: ToolCall = parsed.call
-                    // CRITICAL: same as above — do NOT replay raw JSON as
-                    // an assistant message. Wrap it in prose.
-                    //
-                    // v0.3.6 bugfix: use ${call.tool} (braces) instead of
-                    // $call.tool (no braces). Kotlin parses "$call.tool" as
-                    // "${call}.tool" — stringifying the whole ToolCall object
-                    // then appending the literal ".tool" — which produced
-                    // garbage like 'ToolCall(tool=device_info, arguments={}).tool'
-                    // in the assistant message. The braces force Kotlin to
-                    // access the .tool field directly.
-                    //
-                    // v0.3.7 bugfix: the previous wording "I'll call the X
-                    // tool to look that up." was being PARROTED back by the
-                    // model in iteration 2 — the model saw its own promise
-                    // and just repeated it instead of giving a real answer.
-                    // New wording is past-tense, bracketed, and clearly an
-                    // internal system note that the model won't confuse
-                    // with its user-facing response.
-                    val wrappedAssistantMessage = "[Tool call executed: ${call.tool}]"
+                    // Wrap the tool call as an internal note. Past tense + bracketed
+                    // so the model doesn't parrot it back as a future promise.
                     context.messages.add(
                         AiMessage(
                             role = "assistant",
-                            content = wrappedAssistantMessage
+                            content = "[Tool call executed: ${call.tool}]"
                         )
                     )
-                    // Execute the tool.
-                    val result = toolExecutor.execute(call) { r ->
-                        recordToolCall(call.tool, r)
-                    }
-                    // Append the tool result as a user message (NOT a
-                    // tool message — text-based tool calling doesn't use
-                    // the tool role, and using role=tool without a
-                    // matching tool_call_id will cause 400 errors on
-                    // strict providers like Groq).
-                    //
-                    // v0.3.7: streamlined the directive to be shorter and
-                    // more imperative. The model was getting confused by
-                    // the long instruction block.
-                    val successOrError = if (result.ok) "succeeded" else "failed"
+                    // v0.4: ToolExecutor handles permission enforcement internally
+                    // via PermissionManager. CONFIRMATION_REQUIRED tools will
+                    // suspend here until the UI resolves the pending confirmation.
+                    val result: ToolResult = toolExecutor.execute(
+                        call = call,
+                        conversationId = conversationId,
+                        onResult = { toolName, r -> recordToolCall(toolName, r) }
+                    )
+                    // Append the tool result as a user message (text-based tool
+                    // calling doesn't use the tool role — see v0.3.3 commit msg).
+                    val successOrError = if (result.success) "succeeded" else "failed"
                     context.messages.add(
                         AiMessage(
                             role = "user",
@@ -270,13 +238,7 @@ class AgentRuntime(
 
     /**
      * Returns true if [text] looks like the model parroting back a prior
-     * internal message rather than giving a real answer. Triggers the
-     * stronger nudge in [runLoop].
-     *
-     * Detects:
-     *  - "[Tool call executed: ...]" — the wrapped assistant message
-     *  - "I'll call the ... tool" — old wording the model might still echo
-     *  - "I'll call the ... tool to look that up" — full old wording
+     * internal message rather than giving a real answer.
      */
     private fun looksLikeParrot(text: String): Boolean {
         val lower = text.lowercase()

@@ -9,7 +9,7 @@ import com.kaiser.aiagent.di.aiModule
 import com.kaiser.aiagent.di.appModule
 import com.kaiser.aiagent.di.chatModule
 import com.kaiser.aiagent.di.memoryModule
-import com.kaiser.aiagent.di.registerTools
+import com.kaiser.aiagent.di.registerAllTools
 import com.kaiser.aiagent.di.toolsModule
 import com.kaiser.aiagent.domain.tools.ToolRegistry
 import org.koin.android.ext.android.get
@@ -56,7 +56,7 @@ class AndroidAIAgentApp : Application() {
         // After Koin is up, register every tool singleton with the
         // registry so the agent can describe and invoke them.
         val registry: ToolRegistry = get()
-        registerTools(registry)
+        registerAllTools(registry)
 
         Timber.i("AndroidAIAgentApp initialised — v${BuildConfig.VERSION_NAME}")
         Timber.i("Registered ${registry.all().size} tools: ${registry.all().joinToString { it.name }}")

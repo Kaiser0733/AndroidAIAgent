@@ -97,12 +97,19 @@ fun DebugScreen(
             item { SectionCard("Agent Runtime State") {
                 InfoRow("Busy", if (state.agentBusy) "yes" else "no")
                 InfoRow("Last tool call", state.lastToolCall ?: "(none)")
-                InfoRow("Last tool result", when (state.lastToolResultOk) {
-                    true -> "OK: ${state.lastToolResultOutput ?: ""}"
-                    false -> "FAILED"
+                InfoRow("Last tool result", when (state.lastToolResultSuccess) {
+                    true -> "OK: ${state.lastToolResultData ?: ""}"
+                    false -> "FAILED: ${state.lastToolResultError ?: ""}"
                     null -> "(none)"
                 })
                 InfoRow("Last error", state.lastError ?: "(none)")
+            }}
+
+            item { SectionCard("Tool Stats") {
+                InfoRow("Total registered", state.toolStats.total.toString())
+                InfoRow("SAFE", state.toolStats.safe.toString())
+                InfoRow("CONFIRMATION_REQUIRED", state.toolStats.confirmationRequired.toString())
+                InfoRow("BLOCKED", state.toolStats.blocked.toString())
             }}
 
             item { SectionCard("Registered Tools (${state.tools.size})") {
@@ -112,7 +119,7 @@ fun DebugScreen(
                     state.tools.forEach { t ->
                         Column(modifier = Modifier.padding(vertical = 6.dp)) {
                             Text(
-                                text = t.name,
+                                text = "${t.name}  [${t.permissionLevel}]",
                                 style = MaterialTheme.typography.bodyLarge,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.SemiBold

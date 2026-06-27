@@ -139,6 +139,7 @@ class ChatViewModel(
                 agentRuntime.runTurn(
                     history = history,
                     userMessage = trimmed,
+                    conversationId = conv.id,
                     onDelta = { delta ->
                         _state.value = _state.value.copy(
                             streamingText = _state.value.streamingText + delta
