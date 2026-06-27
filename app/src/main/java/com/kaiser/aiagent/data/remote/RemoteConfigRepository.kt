@@ -7,6 +7,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -28,6 +29,7 @@ class RemoteConfigRepository(private val context: Context) {
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+        @OptIn(ExperimentalSerializationApi::class)
         explicitNulls = false
     }
 

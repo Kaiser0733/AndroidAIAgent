@@ -13,8 +13,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Chat
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.PrecisionManufacturing
@@ -152,7 +152,10 @@ fun HomeScreen(
     // Update-available dialog. Triggered by the VM after a successful check.
     if (state.updateAvailable) {
         AlertDialog(
-            onDismissRequest = { /* keep it modal until user picks */ },
+            onDismissRequest = {
+                // Allow dismissal only when not actively downloading.
+                if (!state.downloading) viewModel.dismissUpdateDialog()
+            },
             title = { Text("Update Available") },
             text = {
                 Column {
@@ -173,22 +176,35 @@ fun HomeScreen(
                             color = MaterialTheme.colorScheme.error
                         )
                     }
+                    if (state.downloading) {
+                        Spacer(Modifier.height(12.dp))
+                        androidx.compose.foundation.layout.Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Text(
+                                "Downloading APK…",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
-                    onClick = {
-                        // The actual download/install is wired up in the
-                        // UpdateRepository. For v0.1 we simply dismiss here;
-                        // a follow-up will launch the system installer.
-                        state.updateAssetUrl?.let { /* TODO: trigger download */ }
-                    }
+                    enabled = !state.downloading && state.updateAssetUrl != null,
+                    onClick = { viewModel.downloadAndInstall() }
                 ) { Text(stringResource(R.string.update_dialog_download)) }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    // dismiss
-                }) { Text(stringResource(R.string.update_dialog_later)) }
+                TextButton(
+                    enabled = !state.downloading,
+                    onClick = { viewModel.dismissUpdateDialog() }
+                ) { Text(stringResource(R.string.update_dialog_later)) }
             }
         )
     }
@@ -244,7 +260,7 @@ private data class FutureModule(
 )
 
 private val FutureModules = listOf(
-    FutureModule("Chat", "Conversational interface (GLM / LLM)", Icons.Filled.Chat),
+    FutureModule("Chat", "Conversational interface (GLM / LLM)", Icons.AutoMirrored.Filled.Chat),
     FutureModule("Tools", "Pluggable tool/function calls", Icons.Filled.Build),
     FutureModule("Memory", "Long-term + working memory", Icons.Filled.Memory),
     FutureModule("Automation", "UI automation pipelines", Icons.Filled.PrecisionManufacturing),

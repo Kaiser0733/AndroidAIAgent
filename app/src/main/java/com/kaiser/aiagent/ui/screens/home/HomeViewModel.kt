@@ -34,6 +34,7 @@ class HomeViewModel(
         val updateAvailable: Boolean = false,
         val updateAssetUrl: String? = null,
         val releaseNotes: String? = null,
+        val downloading: Boolean = false,
         val toast: String? = null,
         val agentDisabled: Boolean = false,
         val maintenanceMode: Boolean = false
@@ -95,5 +96,47 @@ class HomeViewModel(
 
     fun consumeToast() {
         _state.value = _state.value.copy(toast = null)
+    }
+
+    /**
+     * Downloads the APK from the URL surfaced by [checkForUpdate] and hands
+     * it off to the Android system package installer. The dialog stays
+     * visible (showing a progress indicator) until the download completes
+     * or fails; the system installer then takes over and prompts the user
+     * to confirm the install.
+     *
+     * No-op if there is no asset URL or a download is already in flight.
+     */
+    fun downloadAndInstall() {
+        val url = _state.value.updateAssetUrl ?: run {
+            _state.value = _state.value.copy(
+                toast = "No downloadable asset was found for this release."
+            )
+            return
+        }
+        if (_state.value.downloading) return
+
+        _state.value = _state.value.copy(downloading = true, toast = "Downloading update…")
+        viewModelScope.launch {
+            try {
+                updateRepository.downloadAndInstall(url)
+                _state.value = _state.value.copy(
+                    downloading = false,
+                    updateAvailable = false,
+                    toast = "Launching installer…"
+                )
+            } catch (t: Throwable) {
+                Timber.w(t, "APK download/install failed")
+                _state.value = _state.value.copy(
+                    downloading = false,
+                    toast = "Download failed: ${t.message ?: t.javaClass.simpleName}"
+                )
+            }
+        }
+    }
+
+    /** Dismisses the update-available dialog without downloading. */
+    fun dismissUpdateDialog() {
+        _state.value = _state.value.copy(updateAvailable = false)
     }
 }
