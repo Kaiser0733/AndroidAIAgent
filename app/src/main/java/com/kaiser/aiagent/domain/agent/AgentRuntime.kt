@@ -98,8 +98,17 @@ class AgentRuntime(
         while (true) {
             if (iteration >= context.maxToolIterations) {
                 Timber.w("Hit max tool iterations (%d); stopping", context.maxToolIterations)
-                return "I've reached the maximum number of tool calls for this turn. " +
-                    "Here's what I have so far: ${_state.value.streamingText}"
+                // v0.3.4: instead of dumping raw tool-call JSON at the user,
+                // synthesize a helpful answer from the last tool result if
+                // we have one. Falls back to a clean error message if not.
+                val lastResult = _state.value.lastToolResult
+                return if (lastResult != null && lastResult.ok) {
+                    "Based on the tool result: ${lastResult.output}"
+                } else {
+                    "I attempted to use a tool but couldn't complete the request. " +
+                        "Please try rephrasing your question, or ask me something that " +
+                        "doesn't require a tool."
+                }
             }
 
             // Stream the model's response. Accumulate the full text.
@@ -175,13 +184,25 @@ class AgentRuntime(
                     // the tool role, and using role=tool without a
                     // matching tool_call_id will cause 400 errors on
                     // strict providers like Groq).
+                    //
+                    // v0.3.4: phrasing is deliberately assertive ("you
+                    // already called X, here is its result, NOW ANSWER
+                    // THE USER IN PLAIN TEXT"). Without this emphasis,
+                    // Llama 3.3 was observed re-emitting the same tool
+                    // call up to the 5-iteration cap.
+                    val successOrError = if (result.ok) "succeeded" else "failed"
                     context.messages.add(
                         AiMessage(
                             role = "user",
-                            content = "[TOOL RESULT for ${call.tool}] ${result.render()}\n\n" +
-                                "Using this result, please continue your response to the user. " +
-                                "If the result is sufficient, give a natural-language answer. " +
-                                "If you need another tool, emit another tool call."
+                            content = buildString {
+                                appendLine("You just called the \"$call.tool\" tool and it $successOrError. Here is the result:")
+                                appendLine()
+                                appendLine("[TOOL RESULT for ${call.tool}] ${result.render()}")
+                                appendLine()
+                                appendLine("IMPORTANT: You already have this information. DO NOT call \"${call.tool}\" again.")
+                                appendLine("DO NOT emit any more JSON tool calls. Instead, answer the user's original question in plain natural-language English, using the result above.")
+                                appendLine("Your next response must be plain text — NOT JSON.")
+                            }
                         )
                     )
                     iteration++
