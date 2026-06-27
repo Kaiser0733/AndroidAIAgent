@@ -31,15 +31,44 @@ class CreateFolderTool(storage: StorageRepository) : BaseFileTool(storage) {
 
     override suspend fun execute(arguments: String): ToolResult {
         val args = parseArgs(arguments)
-        val parentPath = args.optString("path")
+        var parentPath = args.optString("path")
         val name = args.optString("name")
-        if (parentPath.isNullOrBlank()) return errorResult("Missing 'path' argument.")
         if (name.isNullOrBlank()) return errorResult("Missing 'name' argument.")
+
+        // v0.4.1: if the user didn't specify a path, OR the path is in
+        // shared storage but the app doesn't have MANAGE_EXTERNAL_STORAGE,
+        // fall back to the app's private Documents directory. This makes
+        // "create a folder called Physics" work even without the special
+        // permission.
+        val hasAccess = storage.hasFullStorageAccess()
+        if (parentPath.isNullOrBlank()) {
+            parentPath = storage.privateDocumentsPath()
+        } else if (!hasAccess && storage.isSharedStoragePath(parentPath)) {
+            // User asked for shared storage but we don't have access —
+            // fall back to private storage and note it in the result.
+            val privatePath = storage.privateDocumentsPath()
+            val created = storage.createFolder(privatePath, name)
+            return if (created != null) {
+                ToolResult(
+                    success = true,
+                    data = """{"path":"$created","name":"$name","created":true,"fallback_to_private":true,"note":"Shared storage not writable without 'All files access' permission. Created in app-private Documents instead. Open Settings → AI Configuration → 'Grant all files access' to enable shared storage writes."}""",
+                    metadata = mapOf("path" to created, "name" to name, "fallback" to "true")
+                )
+            } else {
+                errorResult(
+                    "Could not create folder '$name' in either '$parentPath' or the fallback " +
+                        "private directory. The parent may not exist or may not be writable."
+                )
+            }
+        }
+
         val created = storage.createFolder(parentPath, name)
             ?: return errorResult(
                 "Could not create folder '$name' in '$parentPath'. " +
-                    "The parent may not exist, may not be writable, " +
-                    "or a file with that name may already exist."
+                    "The parent may not exist, may not be writable (the app needs " +
+                    "'All files access' permission to write to shared storage on " +
+                    "Android 10+ — open Settings → AI Configuration → 'Grant all " +
+                    "files access'), or a file with that name may already exist."
             )
         val obj = buildJsonObject {
             put("path", created)

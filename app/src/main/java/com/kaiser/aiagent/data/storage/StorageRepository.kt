@@ -39,6 +39,39 @@ import java.util.Locale
  */
 class StorageRepository(private val context: Context) {
 
+    /**
+     * v0.4.1: checks whether the app has full storage access. If false,
+     * file discovery tools will only see app-created files (not the
+     * user's existing PDFs/DOCXs in Downloads/Documents). The tools
+     * include this in their error output so the agent can tell the
+     * user to grant the permission.
+     */
+    fun hasFullStorageAccess(): Boolean =
+        StoragePermissionHelper(context).isFullStorageAccessGranted()
+
+    /**
+     * v0.4.1: returns the app's private Documents directory. This is
+     * always writable without any special permission. Used as a
+     * fallback by create_folder / create_text_file when the user
+     * asks for shared storage but doesn't have 'All files access'.
+     */
+    fun privateDocumentsPath(): String {
+        val dir = java.io.File(context.filesDir, "Documents")
+        if (!dir.exists()) dir.mkdirs()
+        return dir.absolutePath
+    }
+
+    /**
+     * v0.4.1: returns true if the given path is inside shared/external
+     * storage (i.e. would require MANAGE_EXTERNAL_STORAGE to write to
+     * on Android 10+). Used by create tools to decide whether to
+     * fall back to private storage.
+     */
+    fun isSharedStoragePath(path: String): Boolean {
+        val external = Environment.getExternalStorageDirectory()?.absolutePath ?: return false
+        return path.startsWith(external)
+    }
+
     /** Logical name of a discoverable storage root. */
     enum class StorageRoot(val displayName: String, val envConstant: String?) {
         INTERNAL("Internal storage", null),

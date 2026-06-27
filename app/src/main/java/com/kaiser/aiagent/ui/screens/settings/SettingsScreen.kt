@@ -186,6 +186,51 @@ fun SettingsScreen(
                 }
             }
 
+            // ---- Storage (v0.4.1) ----------------------------------
+            item {
+                SectionLabel("Storage Access")
+                Text(
+                    text = if (state.storageAccessGranted) {
+                        "✓ All files access granted. The agent can find all your files in Downloads, Documents, etc."
+                    } else {
+                        "✗ All files access NOT granted. The agent can only see files it created itself — " +
+                            "it will NOT find your existing PDFs, DOCXs, etc. in shared storage. " +
+                            "Tap the button below to grant access."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.storageAccessGranted)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = {
+                        viewModel.grantFullStorageAccess()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (state.storageAccessGranted)
+                        "Open system settings (already granted)"
+                    else
+                        "Grant all files access")
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Opens the system 'All files access' page. Find 'AI Agent' in the list " +
+                        "and toggle it on. Then come back to this screen and tap Refresh below.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(
+                    onClick = { viewModel.refreshStorageAccess() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Refresh — re-check permission status")
+                }
+            }
+
             // ---- Remote Configuration ------------------------------
             item {
                 SectionLabel(stringResource(R.string.settings_remote_config))

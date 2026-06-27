@@ -104,7 +104,31 @@ class AiService {
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                val msg = "SSE failure: ${t?.message ?: response?.code ?: "unknown"}"
+                // v0.4.1: produce a user-friendly error message for
+                // common failure modes (429 rate limit, 401 auth, etc.)
+                // instead of the opaque "SSE failure: 429".
+                val code = response?.code
+                val msg = when (code) {
+                    429 -> "Rate limited by the AI provider (HTTP 429). " +
+                        "You've sent too many requests in a short window. " +
+                        "Wait 30-60 seconds and try again. If this keeps " +
+                        "happening, consider switching to a different provider " +
+                        "in Settings (Groq's free tier is 30 req/min; NVIDIA's " +
+                        "free tier has different limits)."
+                    401 -> "Authentication failed (HTTP 401). Your API key is " +
+                        "missing, invalid, or expired. Open Settings → AI " +
+                        "Configuration and re-enter your API key."
+                    403 -> "Forbidden (HTTP 403). Your API key may not have " +
+                        "access to the requested model. Check the Model field " +
+                        "in Settings → AI Configuration."
+                    404 -> "Not found (HTTP 404). The API endpoint URL is " +
+                        "wrong. Check the Endpoint field in Settings → AI " +
+                        "Configuration — it should end with /chat/completions."
+                    500, 502, 503, 504 -> "The AI provider's server errored " +
+                        "(HTTP $code). Try again in a few seconds."
+                    null -> "Network error: ${t?.message ?: "unknown"}"
+                    else -> "SSE failure: HTTP $code — ${t?.message ?: "no detail"}"
+                }
                 Timber.w(t, msg)
                 channel.close(AiException(msg, t))
             }

@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.kaiser.aiagent.data.ai.AiConfig
 import com.kaiser.aiagent.data.ai.AiRepository
 import com.kaiser.aiagent.data.remote.RemoteConfigRepository
+import com.kaiser.aiagent.data.storage.StoragePermissionHelper
 import com.kaiser.aiagent.data.updater.UpdateRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -15,11 +16,9 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * Backs the Settings screen. v0.3 adds three new sections compared to
- * v0.2:
- *  - AI configuration (API key, endpoint, model, temperature, max tokens)
- *  - Test connection button
- *  - Debug screen entry (handled by the screen, not the VM)
+ * Backs the Settings screen. v0.4.1 adds a Storage section showing
+ * whether 'All files access' is granted and a button to open the
+ * system settings page to grant it.
  */
 class SettingsViewModel(
     private val context: Context,
@@ -28,6 +27,8 @@ class SettingsViewModel(
 ) : ViewModel() {
 
     private val remoteConfigRepository = RemoteConfigRepository(context)
+    private val storagePermissionHelper = StoragePermissionHelper(context)
+    private val _storageAccessGranted = MutableStateFlow(storagePermissionHelper.isFullStorageAccessGranted())
 
     data class UiState(
         // Updater / remote config (existing)
@@ -44,6 +45,8 @@ class SettingsViewModel(
         val extraBody: String = "",
         val testingConnection: Boolean = false,
         val connectionStatus: String? = null,
+        // Storage (v0.4.1)
+        val storageAccessGranted: Boolean = false,
         // Common
         val dirty: Boolean = false
     )
@@ -111,9 +114,21 @@ class SettingsViewModel(
             extraBody = extraBody,
             testingConnection = testing,
             connectionStatus = connStatus,
+            storageAccessGranted = _storageAccessGranted.value,
             dirty = listOf(dUrl, dRepo, dApiKey, dEndpoint, dModel, dTemp, dMax, dTopP, dExtraBody).any { it != null }
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState())
+
+    /** Opens the system settings page to grant 'All files access'. */
+    fun grantFullStorageAccess() {
+        storagePermissionHelper.openFullStorageAccessSettings()
+    }
+
+    /** Re-checks whether storage access was granted (call after returning
+     *  from the system settings page). */
+    fun refreshStorageAccess() {
+        _storageAccessGranted.value = storagePermissionHelper.isFullStorageAccessGranted()
+    }
 
     // ---- Updater / remote config setters (existing) --------------------
     fun updateRemoteConfigUrl(value: String) { _draftUrl.value = value }

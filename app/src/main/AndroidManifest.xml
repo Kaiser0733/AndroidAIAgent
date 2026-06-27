@@ -16,6 +16,15 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- v0.4.1: MANAGE_EXTERNAL_STORAGE lets the agent see ALL files in
+         shared storage (Downloads, Documents, etc.), not just files the
+         app itself created. Required for the file-discovery tools to
+         actually find the user's existing PDFs, DOCXs, etc. on Android 10+.
+         The user must grant this manually via system settings — Android
+         does not allow it to be granted via the normal permission dialog.
+         The app opens the system settings page via SettingsActivity. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <application
         android:name=".AndroidAIAgentApp"

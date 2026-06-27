@@ -46,6 +46,7 @@ class SearchFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
         val matchesArr = buildJsonArray {
             for (m in result.matches) add(m.toJson())
         }
+        val hasAccess = storage.hasFullStorageAccess()
         val obj = buildJsonObject {
             put("query", result.query)
             put("extensions", buildJsonArray {
@@ -55,6 +56,17 @@ class SearchFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
             put("match_count", result.matches.size)
             put("truncated", result.truncated)
             put("searched_dirs", result.searchedDirs)
+            put("full_storage_access", hasAccess)
+            if (!hasAccess) {
+                put(
+                    "warning",
+                    "App does not have 'All files access' permission. " +
+                        "Only files created by this app are visible. " +
+                        "Tell the user to open Settings → AI Configuration → " +
+                        "'Grant all files access' and enable the toggle, then " +
+                        "retry the search to see all their files."
+                )
+            }
         }
         return ToolResult(
             success = true,
@@ -63,7 +75,8 @@ class SearchFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
                 "query" to query,
                 "match_count" to result.matches.size.toString(),
                 "truncated" to result.truncated.toString(),
-                "searched_dirs" to result.searchedDirs.toString()
+                "searched_dirs" to result.searchedDirs.toString(),
+                "full_storage_access" to hasAccess.toString()
             )
         )
     }
