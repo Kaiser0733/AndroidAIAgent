@@ -134,12 +134,23 @@ class AgentRuntime(
                         durationMs = 0
                     )
                     recordToolCall("(malformed)", result)
-                    context.messages.add(AiMessage(role = "assistant", content = responseText))
+                    // CRITICAL: many OpenAI-compatible providers (Groq,
+                    // OpenAI itself, etc.) reject assistant messages that
+                    // contain only raw JSON — the API expects assistant
+                    // messages to be natural-language text. Wrap the
+                    // tool-call JSON in plain prose so history replay
+                    // doesn't trip provider validation (400 SSE errors).
                     context.messages.add(
                         AiMessage(
-                            role = "tool",
-                            content = result.render(),
-                            name = "system"
+                            role = "assistant",
+                            content = "I'll attempt to call a tool, but my call was malformed."
+                        )
+                    )
+                    context.messages.add(
+                        AiMessage(
+                            role = "user",
+                            content = "[TOOL RESULT] ${result.render()}\n\n" +
+                                "Please continue your response to the user, taking this result into account."
                         )
                     )
                     iteration++
@@ -147,19 +158,30 @@ class AgentRuntime(
                 }
                 is ToolCallParseResult.Found -> {
                     val call: ToolCall = parsed.call
-                    // Add the assistant's tool-call message to the history.
-                    context.messages.add(AiMessage(role = "assistant", content = responseText))
+                    // CRITICAL: same as above — do NOT replay raw JSON as
+                    // an assistant message. Wrap it in prose.
+                    context.messages.add(
+                        AiMessage(
+                            role = "assistant",
+                            content = "I'll call the \"$call.tool\" tool to look that up."
+                        )
+                    )
                     // Execute the tool.
                     val result = toolExecutor.execute(call) { r ->
                         recordToolCall(call.tool, r)
                     }
-                    // Append the tool result so the model can use it on
-                    // the next iteration.
+                    // Append the tool result as a user message (NOT a
+                    // tool message — text-based tool calling doesn't use
+                    // the tool role, and using role=tool without a
+                    // matching tool_call_id will cause 400 errors on
+                    // strict providers like Groq).
                     context.messages.add(
                         AiMessage(
-                            role = "tool",
-                            content = result.render(),
-                            name = call.tool
+                            role = "user",
+                            content = "[TOOL RESULT for ${call.tool}] ${result.render()}\n\n" +
+                                "Using this result, please continue your response to the user. " +
+                                "If the result is sufficient, give a natural-language answer. " +
+                                "If you need another tool, emit another tool call."
                         )
                     )
                     iteration++
