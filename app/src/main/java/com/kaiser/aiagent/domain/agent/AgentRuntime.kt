@@ -3,6 +3,7 @@ package com.kaiser.aiagent.domain.agent
 import com.kaiser.aiagent.data.ai.AiException
 import com.kaiser.aiagent.data.ai.AiMessage
 import com.kaiser.aiagent.data.ai.AiRepository
+import com.kaiser.aiagent.data.logging.LogRepository
 import com.kaiser.aiagent.domain.tools.ToolCall
 import com.kaiser.aiagent.domain.tools.ToolCallParseResult
 import com.kaiser.aiagent.domain.tools.ToolCallParser
@@ -39,7 +40,8 @@ import timber.log.Timber
 class AgentRuntime(
     private val repository: AiRepository,
     private val toolRegistry: ToolRegistry,
-    private val toolExecutor: ToolExecutor
+    private val toolExecutor: ToolExecutor,
+    private val logRepository: LogRepository? = null
 ) {
 
     private val parser = ToolCallParser()
@@ -98,16 +100,23 @@ class AgentRuntime(
         while (true) {
             if (iteration >= context.maxToolIterations) {
                 Timber.w("Hit max tool iterations (%d); stopping", context.maxToolIterations)
-                // v0.3.4: instead of dumping raw tool-call JSON at the user,
-                // synthesize a helpful answer from the last tool result if
-                // we have one. Falls back to a clean error message if not.
+                // v0.3.5: smarter fallback. If a tool WAS successfully
+                // called (we have a lastToolResult), surface that. If no
+                // tool was called but the model produced text, return the
+                // text — it may be a usable answer even without tools.
+                // Only show the "couldn't complete" error when we truly
+                // have nothing useful.
                 val lastResult = _state.value.lastToolResult
-                return if (lastResult != null && lastResult.ok) {
-                    "Based on the tool result: ${lastResult.output}"
-                } else {
-                    "I attempted to use a tool but couldn't complete the request. " +
-                        "Please try rephrasing your question, or ask me something that " +
-                        "doesn't require a tool."
+                val lastText = _state.value.streamingText
+                return when {
+                    lastResult != null && lastResult.ok ->
+                        "Based on the tool result: ${lastResult.output}"
+                    lastText.isNotBlank() ->
+                        lastText  // the model's text response, even if no tool ran
+                    else ->
+                        "I attempted to use a tool but couldn't complete the request. " +
+                            "Please try rephrasing your question, or ask me something that " +
+                            "doesn't require a tool."
                 }
             }
 
@@ -125,6 +134,14 @@ class AgentRuntime(
 
             val responseText = accumulator.toString().trim()
             Timber.i("Model iteration %d produced %d chars", iteration, responseText.length)
+            // v0.3.5: log every model response verbatim so we can
+            // diagnose parser failures ("Last tool call: (none)") by
+            // reading update.log. Truncate to 1000 chars to keep the
+            // log readable.
+            logRepository?.appendUpdateLog(
+                "Model iter $iteration (${responseText.length} chars): " +
+                    responseText.take(1000).replace("\n", "\\n")
+            )
 
             // Scan for a tool call.
             when (val parsed = parser.parse(responseText)) {
