@@ -4,6 +4,36 @@ All notable changes to this project are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.2] - 2026-06-27
+
+### Added
+- **Update Available dialog Download button is now wired up.** Tapping
+  it calls `UpdateRepository.downloadAndInstall()` which downloads the
+  APK from the GitHub release asset URL and hands off to the Android
+  system package installer via a FileProvider content URI.
+- `HomeViewModel.downloadAndInstall()` — coordinates the download on
+  `Dispatchers.IO`, surfaces a progress indicator in the dialog, and
+  emits a toast on success or failure.
+- `HomeViewModel.dismissUpdateDialog()` — dismisses the update dialog
+  without downloading.
+
+### Changed
+- Bumped `versionCode` 1 → 2 and `versionName` "0.1" → "0.2" so the
+  v0.1 installer can detect v0.2 as a real update via the GitHub
+  Releases API.
+
+### Fixed
+- `RemoteConfigRepository` — added `@OptIn(ExperimentalSerializationApi)`
+  around `explicitNulls = false` to silence the opt-in warning.
+- `HomeScreen` — switched `Icons.Filled.Chat` to
+  `Icons.AutoMirrored.Filled.Chat` (the former is deprecated).
+
+### Tags
+- Git tag `v0.2-alpha` is created on the `dev` branch (and fast-forwarded
+  to `main`). GitHub Release `v0.2-alpha` is published with the APK as a
+  release asset, marked as `make_latest=true` so the app's
+  `releases/latest` API call returns v0.2.
+
 ## [0.1] - 2026-06-27
 
 ### Added
