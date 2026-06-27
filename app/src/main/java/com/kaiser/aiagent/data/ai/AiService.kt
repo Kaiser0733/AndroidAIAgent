@@ -170,7 +170,17 @@ class AiService {
                 }
             } catch (e: IOException) {
                 if (attempt == config.maxRetries) {
-                    throw AiException("Network error after ${attempt + 1} attempts: ${e.message}", e)
+                    // Include the exception class name so the user can tell
+                    // a timeout (SocketTimeoutException) from a DNS failure
+                    // (UnknownHostException) from a TLS failure
+                    // (SSLException) — they all surface as "network error"
+                    // without this hint.
+                    val exType = e.javaClass.simpleName
+                    val exMsg = e.message?.take(120) ?: "(no detail)"
+                    throw AiException(
+                        "Network error after ${attempt + 1} attempts: $exType — $exMsg",
+                        e
+                    )
                 }
                 lastError = e
             }

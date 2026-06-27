@@ -110,7 +110,7 @@ fun SettingsScreen(
                     label = { Text("Model") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text("e.g. deepseek-ai/deepseek-v4-pro") }
+                    placeholder = { Text("e.g. deepseek-ai/deepseek-v4-flash") }
                 )
                 Spacer(Modifier.height(8.dp))
                 Row(

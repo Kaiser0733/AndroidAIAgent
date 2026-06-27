@@ -34,9 +34,16 @@ data class AiConfig(
      */
     val extraBody: String = "",
     /** Per-request connect timeout in seconds. */
-    val connectTimeoutSec: Long = 15,
-    /** Per-request read timeout in seconds (0 = no timeout for streaming). */
-    val readTimeoutSec: Long = 60,
+    val connectTimeoutSec: Long = 30,
+    /**
+     * Per-request read timeout in seconds (0 = no timeout for streaming).
+     *
+     * v0.3.2 raised this from 60 to 180 because some NVIDIA NIM models
+     * (notably deepseek-v4-pro) have cold-start latency that can exceed
+     * 60s on the free tier. Streaming uses readTimeout=0 (no timeout)
+     * so this only affects the non-streaming path used by Test Connection.
+     */
+    val readTimeoutSec: Long = 180,
     /** Max retries on transient failures (network blips, 5xx, 429). */
     val maxRetries: Int = 2,
     /** Base delay between retries, in milliseconds (doubles each retry). */
@@ -44,10 +51,16 @@ data class AiConfig(
 ) {
     companion object {
         // ---- Default: NVIDIA NIM (free tier at https://build.nvidia.com) ----
-        // Get a key at https://build.nvidia.com/deepseek-ai/deepseek-v4-pro
+        // Get a key at https://build.nvidia.com/deepseek-ai/deepseek-v4-flash
         // (sign in with email/Google, click "Get API Key").
+        //
+        // v0.3.2 switched the default model from deepseek-v4-pro to
+        // deepseek-v4-flash because the Pro variant has cold-start
+        // latency that exceeds the previous 60s read timeout. Flash
+        // responds in 2-5s reliably. Pro still works if you switch to
+        // it manually in Settings — just be patient on the first call.
         const val DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
-        const val DEFAULT_MODEL = "deepseek-ai/deepseek-v4-pro"
+        const val DEFAULT_MODEL = "deepseek-ai/deepseek-v4-flash"
         // Default extra body — disables DeepSeek's "thinking" trace so the
         // response comes back as plain text. Users can override in Settings.
         const val DEFAULT_EXTRA_BODY = """{"chat_template_kwargs":{"thinking":false}}"""
