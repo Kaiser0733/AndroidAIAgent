@@ -4,6 +4,46 @@ All notable changes to this project are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-06-27
+
+### Changed
+- **Default AI endpoint switched from GLM-4 (paid) to NVIDIA NIM (free
+  tier at https://build.nvidia.com).** This makes the app usable out
+  of the box without paying — sign up at
+  https://build.nvidia.com/deepseek-ai/deepseek-v4-pro with an email
+  or Google account, click "Get API Key", paste it into Settings.
+- Default model is now `deepseek-ai/deepseek-v4-pro`.
+- Default `extraBody` is `{"chat_template_kwargs":{"thinking":false}}`
+  so DeepSeek's reasoning trace is suppressed by default (the user
+  sees the final answer, not the thinking process).
+
+### Added
+- `top_p` parameter on `AiRequest` and `AiConfig` — sent as
+  `top_p` in the request body when set (optional).
+- `extraBody` field on `AiConfig` — a raw JSON object string that is
+  merged into the top level of every request body. Lets the user set
+  provider-specific options (like NVIDIA DeepSeek's
+  `chat_template_kwargs.thinking`) without code changes.
+- `AiRequest.toJsonWithExtraBody()` helper — serializes the request
+  and merges the extra body, falling back to plain serialization when
+  the extra body is blank.
+- Settings screen now exposes Temperature, Top P, Max tokens, and
+  Extra body JSON fields (the last with a placeholder showing the
+  DeepSeek thinking-toggle example).
+- DataStoreAiSettings persists `top_p` and `extra_body` keys.
+
+### Documentation
+- `AiConfig.kt` companion now documents alternative free endpoints
+  inline: Groq, Google Gemini, OpenRouter, GLM-4, local Llama.cpp /
+  Ollama — with their endpoints, default models, and where to get
+  API keys.
+
+### Tags
+- Git tag `v0.3.1-alpha` is created on the `dev` branch (and
+  fast-forwarded to `main`). GitHub Release `v0.3.1-alpha` is published
+  with the APK as a release asset, marked as `make_latest=true`.
+  The previous `v0.3-alpha` release is demoted to `make_latest=false`.
+
 ## [0.3] - 2026-06-27
 
 ### Added — AI module

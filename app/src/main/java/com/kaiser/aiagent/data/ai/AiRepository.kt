@@ -47,6 +47,7 @@ class AiRepository(
             messages = messages,
             stream = false,
             temperature = cfg.temperature,
+            topP = cfg.topP,
             maxTokens = cfg.maxTokens
         )
         val response = service.chat(cfg, request)
@@ -72,6 +73,7 @@ class AiRepository(
             messages = messages,
             stream = true,
             temperature = cfg.temperature,
+            topP = cfg.topP,
             maxTokens = cfg.maxTokens
         )
         service.streamChat(cfg, request).collect { emit(it) }

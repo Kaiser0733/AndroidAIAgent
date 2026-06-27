@@ -2,6 +2,9 @@ package com.kaiser.aiagent.data.ai
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonObject
 
 /**
  * Request / response models for an OpenAI-compatible chat completions API
@@ -25,8 +28,37 @@ data class AiRequest(
     val messages: List<AiMessage>,
     val stream: Boolean = false,
     val temperature: Double = 0.7,
+    @SerialName("top_p") val topP: Double? = null,
     @SerialName("max_tokens") val maxTokens: Int? = null
-)
+) {
+    /**
+     * Serializes this request to JSON, then merges [extraBody] (a raw
+     * JSON object string) into the top level. This is how provider-
+     * specific options like NVIDIA's `chat_template_kwargs` get added
+     * without bloating the strict schema.
+     *
+     * Returns null if [extraBody] is blank — the caller should fall
+     * back to plain `Json.encodeToString(...)` in that case.
+     */
+    fun toJsonWithExtraBody(extraBody: String): String {
+        if (extraBody.isBlank()) {
+            return DefaultJson.encodeToString(serializer(), this)
+        }
+        val base = DefaultJson.encodeToJsonElement(serializer(), this).jsonObject
+        val extra = DefaultJson.parseToJsonElement(extraBody).jsonObject
+        val merged = JsonObject(base.toMap() + extra.toMap())
+        return DefaultJson.encodeToString(JsonObject.serializer(), merged)
+    }
+
+    private companion object {
+        val DefaultJson = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            explicitNulls = false
+            encodeDefaults = true
+        }
+    }
+}
 
 @Serializable
 data class AiResponse(

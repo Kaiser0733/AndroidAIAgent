@@ -39,7 +39,9 @@ class SettingsViewModel(
         val endpoint: String = "",
         val model: String = "",
         val temperature: Double = 0.7,
+        val topP: Double = -1.0,
         val maxTokens: Int = -1,
+        val extraBody: String = "",
         val testingConnection: Boolean = false,
         val connectionStatus: String? = null,
         // Common
@@ -54,6 +56,8 @@ class SettingsViewModel(
     private val _draftModel = MutableStateFlow<String?>(null)
     private val _draftTemp = MutableStateFlow<Double?>(null)
     private val _draftMaxTokens = MutableStateFlow<Int?>(null)
+    private val _draftTopP = MutableStateFlow<Double?>(null)
+    private val _draftExtraBody = MutableStateFlow<String?>(null)
     private val _testing = MutableStateFlow(false)
     private val _connStatus = MutableStateFlow<String?>(null)
 
@@ -63,6 +67,7 @@ class SettingsViewModel(
         aiRepository.configFlow,
         _draftUrl, _draftRepo, _autoCheck,
         _draftApiKey, _draftEndpoint, _draftModel, _draftTemp, _draftMaxTokens,
+        _draftTopP, _draftExtraBody,
         _testing, _connStatus
     ) { values ->
         @Suppress("UNCHECKED_CAST")
@@ -78,8 +83,10 @@ class SettingsViewModel(
         val dModel = values[8] as String?
         val dTemp = values[9] as Double?
         val dMax = values[10] as Int?
-        val testing = values[11] as Boolean
-        val connStatus = values[12] as String?
+        val dTopP = values[11] as Double?
+        val dExtraBody = values[12] as String?
+        val testing = values[13] as Boolean
+        val connStatus = values[14] as String?
 
         val url = dUrl ?: savedUrl
         val repo = dRepo ?: savedRepo
@@ -87,7 +94,9 @@ class SettingsViewModel(
         val endpoint = dEndpoint ?: aiCfg.endpoint
         val model = dModel ?: aiCfg.model
         val temp = dTemp ?: aiCfg.temperature
+        val topP = dTopP ?: (aiCfg.topP ?: -1.0)
         val maxTok = dMax ?: (aiCfg.maxTokens ?: -1)
+        val extraBody = dExtraBody ?: aiCfg.extraBody
 
         UiState(
             remoteConfigUrl = url,
@@ -97,10 +106,12 @@ class SettingsViewModel(
             endpoint = endpoint,
             model = model,
             temperature = temp,
+            topP = topP,
             maxTokens = maxTok,
+            extraBody = extraBody,
             testingConnection = testing,
             connectionStatus = connStatus,
-            dirty = listOf(dUrl, dRepo, dApiKey, dEndpoint, dModel, dTemp, dMax).any { it != null }
+            dirty = listOf(dUrl, dRepo, dApiKey, dEndpoint, dModel, dTemp, dMax, dTopP, dExtraBody).any { it != null }
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState())
 
@@ -115,6 +126,8 @@ class SettingsViewModel(
     fun updateModel(value: String) { _draftModel.value = value }
     fun updateTemperature(value: Double) { _draftTemp.value = value }
     fun updateMaxTokens(value: Int) { _draftMaxTokens.value = value }
+    fun updateTopP(value: Double) { _draftTopP.value = value }
+    fun updateExtraBody(value: String) { _draftExtraBody.value = value }
 
     /**
      * Saves all dirty fields to their respective DataStores. AI config
@@ -128,7 +141,8 @@ class SettingsViewModel(
             // Only write AI config if any AI field was drafted.
             if (_draftApiKey.value != null || _draftEndpoint.value != null ||
                 _draftModel.value != null || _draftTemp.value != null ||
-                _draftMaxTokens.value != null
+                _draftMaxTokens.value != null || _draftTopP.value != null ||
+                _draftExtraBody.value != null
             ) {
                 aiRepository.updateConfig { current ->
                     current.copy(
@@ -136,8 +150,10 @@ class SettingsViewModel(
                         endpoint = _draftEndpoint.value ?: current.endpoint,
                         model = _draftModel.value ?: current.model,
                         temperature = _draftTemp.value ?: current.temperature,
+                        topP = _draftTopP.value?.takeIf { it > 0 } ?: current.topP,
                         maxTokens = _draftMaxTokens.value?.takeIf { it > 0 }
-                            ?: current.maxTokens
+                            ?: current.maxTokens,
+                        extraBody = _draftExtraBody.value ?: current.extraBody
                     )
                 }
             }
@@ -149,6 +165,8 @@ class SettingsViewModel(
             _draftModel.value = null
             _draftTemp.value = null
             _draftMaxTokens.value = null
+            _draftTopP.value = null
+            _draftExtraBody.value = null
         }
     }
 
@@ -174,6 +192,8 @@ class SettingsViewModel(
                 _draftApiKey.value = null
                 _draftEndpoint.value = null
                 _draftModel.value = null
+                _draftTopP.value = null
+                _draftExtraBody.value = null
             }
             _testing.value = true
             _connStatus.value = null

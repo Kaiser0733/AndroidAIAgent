@@ -110,9 +110,57 @@ fun SettingsScreen(
                     label = { Text("Model") },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    placeholder = { Text("e.g. glm-4-flash") }
+                    placeholder = { Text("e.g. deepseek-ai/deepseek-v4-pro") }
                 )
                 Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = state.temperature.toString(),
+                        onValueChange = { it.toDoubleOrNull()?.let(viewModel::updateTemperature) },
+                        label = { Text("Temperature") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    )
+                    OutlinedTextField(
+                        value = if (state.topP > 0) state.topP.toString() else "",
+                        onValueChange = { it.toDoubleOrNull()?.let(viewModel::updateTopP) },
+                        label = { Text("Top P (optional)") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = if (state.maxTokens > 0) state.maxTokens.toString() else "",
+                    onValueChange = { it.toIntOrNull()?.let(viewModel::updateMaxTokens) },
+                    label = { Text("Max tokens (optional, -1 = provider default)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = state.extraBody,
+                    onValueChange = viewModel::updateExtraBody,
+                    label = { Text("Extra body JSON (advanced)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                    maxLines = 4,
+                    placeholder = {
+                        Text("""{"chat_template_kwargs":{"thinking":false}}""")
+                    }
+                )
+                Text(
+                    text = "Merged into the request body as top-level fields. Used for " +
+                        "provider-specific options like NVIDIA DeepSeek's thinking toggle.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

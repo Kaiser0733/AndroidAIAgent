@@ -122,8 +122,8 @@ class AiService {
     // ---- Helpers --------------------------------------------------------
 
     private fun buildRequest(config: AiConfig, request: AiRequest): Request {
-        val body: RequestBody = json.encodeToString(AiRequest.serializer(), request)
-            .toRequestBody("application/json".toMediaType())
+        val bodyJson = request.toJsonWithExtraBody(config.extraBody)
+        val body: RequestBody = bodyJson.toRequestBody("application/json".toMediaType())
         return Request.Builder()
             .url(config.endpoint)
             .header("Authorization", "Bearer ${config.apiKey}")
