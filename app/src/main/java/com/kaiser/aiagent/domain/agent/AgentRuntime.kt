@@ -143,6 +143,25 @@ class AgentRuntime(
                     responseText.take(1000).replace("\n", "\\n")
             )
 
+            // v0.3.7: parrot detection. If the model echoes back a prior
+            // wrapped assistant message (e.g. "[Tool call executed: X]")
+            // or a prior tool-result directive, it's stuck in a loop.
+            // Force a stronger nudge before the next iteration.
+            if (iteration > 0 && looksLikeParrot(responseText)) {
+                Timber.w("Parrot detected on iteration %d: %s", iteration, responseText.take(100))
+                logRepository?.appendUpdateLog("PARROT DETECTED — adding stronger nudge")
+                context.messages.add(
+                    AiMessage(
+                        role = "user",
+                        content = "Stop repeating yourself. You have already called the tool and received the result. " +
+                            "Now answer the user's ORIGINAL question in plain natural-language English. " +
+                            "Do not mention tools. Do not mention calling anything. Just answer the question directly."
+                    )
+                )
+                iteration++
+                continue
+            }
+
             // Scan for a tool call.
             when (val parsed = parser.parse(responseText)) {
                 is ToolCallParseResult.None -> {
@@ -194,10 +213,19 @@ class AgentRuntime(
                     // garbage like 'ToolCall(tool=device_info, arguments={}).tool'
                     // in the assistant message. The braces force Kotlin to
                     // access the .tool field directly.
+                    //
+                    // v0.3.7 bugfix: the previous wording "I'll call the X
+                    // tool to look that up." was being PARROTED back by the
+                    // model in iteration 2 — the model saw its own promise
+                    // and just repeated it instead of giving a real answer.
+                    // New wording is past-tense, bracketed, and clearly an
+                    // internal system note that the model won't confuse
+                    // with its user-facing response.
+                    val wrappedAssistantMessage = "[Tool call executed: ${call.tool}]"
                     context.messages.add(
                         AiMessage(
                             role = "assistant",
-                            content = "I'll call the \"${call.tool}\" tool to look that up."
+                            content = wrappedAssistantMessage
                         )
                     )
                     // Execute the tool.
@@ -210,23 +238,18 @@ class AgentRuntime(
                     // matching tool_call_id will cause 400 errors on
                     // strict providers like Groq).
                     //
-                    // v0.3.4: phrasing is deliberately assertive ("you
-                    // already called X, here is its result, NOW ANSWER
-                    // THE USER IN PLAIN TEXT"). Without this emphasis,
-                    // Llama 3.3 was observed re-emitting the same tool
-                    // call up to the 5-iteration cap.
+                    // v0.3.7: streamlined the directive to be shorter and
+                    // more imperative. The model was getting confused by
+                    // the long instruction block.
                     val successOrError = if (result.ok) "succeeded" else "failed"
                     context.messages.add(
                         AiMessage(
                             role = "user",
                             content = buildString {
-                                appendLine("You just called the \"${call.tool}\" tool and it $successOrError. Here is the result:")
+                                appendLine("The ${call.tool} tool $successOrError. Result:")
+                                appendLine(result.render())
                                 appendLine()
-                                appendLine("[TOOL RESULT for ${call.tool}] ${result.render()}")
-                                appendLine()
-                                appendLine("IMPORTANT: You already have this information. DO NOT call \"${call.tool}\" again.")
-                                appendLine("DO NOT emit any more JSON tool calls. Instead, answer the user's original question in plain natural-language English, using the result above.")
-                                appendLine("Your next response must be plain text — NOT JSON.")
+                                appendLine("Using this result, answer the user's original question in plain English. Do not call any more tools. Do not repeat yourself.")
                             }
                         )
                     )
@@ -243,6 +266,24 @@ class AgentRuntime(
             lastToolResult = result,
             toolCallsThisTurn = _state.value.toolCallsThisTurn + 1
         )
+    }
+
+    /**
+     * Returns true if [text] looks like the model parroting back a prior
+     * internal message rather than giving a real answer. Triggers the
+     * stronger nudge in [runLoop].
+     *
+     * Detects:
+     *  - "[Tool call executed: ...]" — the wrapped assistant message
+     *  - "I'll call the ... tool" — old wording the model might still echo
+     *  - "I'll call the ... tool to look that up" — full old wording
+     */
+    private fun looksLikeParrot(text: String): Boolean {
+        val lower = text.lowercase()
+        return lower.contains("[tool call executed:") ||
+            lower.contains("i'll call the \"") ||
+            lower.contains("i'll call the '") ||
+            lower.contains("i'll call the ") && lower.contains("tool to look that up")
     }
 
     /** Resets per-turn counters. Call before starting a new turn. */
