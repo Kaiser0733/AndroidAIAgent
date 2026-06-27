@@ -186,10 +186,18 @@ class AgentRuntime(
                     val call: ToolCall = parsed.call
                     // CRITICAL: same as above — do NOT replay raw JSON as
                     // an assistant message. Wrap it in prose.
+                    //
+                    // v0.3.6 bugfix: use ${call.tool} (braces) instead of
+                    // $call.tool (no braces). Kotlin parses "$call.tool" as
+                    // "${call}.tool" — stringifying the whole ToolCall object
+                    // then appending the literal ".tool" — which produced
+                    // garbage like 'ToolCall(tool=device_info, arguments={}).tool'
+                    // in the assistant message. The braces force Kotlin to
+                    // access the .tool field directly.
                     context.messages.add(
                         AiMessage(
                             role = "assistant",
-                            content = "I'll call the \"$call.tool\" tool to look that up."
+                            content = "I'll call the \"${call.tool}\" tool to look that up."
                         )
                     )
                     // Execute the tool.
@@ -212,7 +220,7 @@ class AgentRuntime(
                         AiMessage(
                             role = "user",
                             content = buildString {
-                                appendLine("You just called the \"$call.tool\" tool and it $successOrError. Here is the result:")
+                                appendLine("You just called the \"${call.tool}\" tool and it $successOrError. Here is the result:")
                                 appendLine()
                                 appendLine("[TOOL RESULT for ${call.tool}] ${result.render()}")
                                 appendLine()
