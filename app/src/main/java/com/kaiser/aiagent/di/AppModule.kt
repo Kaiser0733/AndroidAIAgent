@@ -11,12 +11,16 @@ import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
 
 /**
- * Koin module wiring for v0.1.
+ * Foundation Koin module — repositories + view models that existed in
+ * v0.1/v0.2. New v0.3 subsystems live in their own modules:
+ *  - [aiModule]        — AI HTTP client + settings + DebugViewModel
+ *  - [agentModule]     — AgentRuntime + ToolRegistry + ToolExecutor
+ *  - [chatModule]      — ConversationRepository + ChatViewModel
+ *  - [memoryModule]    — MemoryRepository + MemoryManager
+ *  - [toolsModule]     — demo tool singletons
  *
- * Each future agent module (chat / tools / memory / automation /
- * accessibility / updater) is expected to contribute its own Koin module
- * later and be aggregated here. For now we only register the foundation
- * pieces: repositories + view models.
+ * All modules are aggregated in
+ * [com.kaiser.aiagent.AndroidAIAgentApp.onCreate].
  */
 val appModule = module {
 
@@ -29,8 +33,8 @@ val appModule = module {
     // ---- Updater ---------------------------------------------------------
     single { UpdateRepository(androidContext(), get()) }
 
-    // ---- View models -----------------------------------------------------
+    // ---- View models (foundation) --------------------------------------
     viewModel { HomeViewModel(get(), get()) }
-    viewModel { SettingsViewModel(androidContext(), get()) }
+    viewModel { SettingsViewModel(androidContext(), get(), get()) }
     viewModel { AboutViewModel(androidContext()) }
 }

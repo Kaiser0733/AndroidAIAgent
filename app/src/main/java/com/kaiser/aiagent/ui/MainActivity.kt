@@ -6,31 +6,25 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.kaiser.aiagent.data.remote.RemoteConfigRepository
 import com.kaiser.aiagent.ui.navigation.Destinations
 import com.kaiser.aiagent.ui.screens.about.AboutScreen
+import com.kaiser.aiagent.ui.screens.chat.ChatScreen
+import com.kaiser.aiagent.ui.screens.debug.DebugScreen
 import com.kaiser.aiagent.ui.screens.home.HomeScreen
 import com.kaiser.aiagent.ui.screens.launch.LaunchScreen
 import com.kaiser.aiagent.ui.screens.settings.SettingsScreen
 import com.kaiser.aiagent.ui.theme.AndroidAIAgentTheme
-import kotlinx.coroutines.delay
-import org.koin.android.ext.android.inject
 
 /**
- * Single-activity host for the entire app. v0.1 uses a flat Compose
- * Navigation graph; future versions can split this into multiple
- * `NavGraph` helpers per feature module.
+ * Single-activity host. v0.3 nav graph adds CHAT and DEBUG
+ * destinations. The Debug screen is intentionally not surfaced in the
+ * Home screen UI — it's reachable from Settings → "Debug" button.
  */
 class MainActivity : ComponentActivity() {
-
-    private val remoteConfigRepo: RemoteConfigRepository by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,17 +59,29 @@ private fun AppNavGraph() {
         composable(Destinations.HOME.route) {
             HomeScreen(
                 onOpenSettings = { navController.navigate(Destinations.SETTINGS.route) },
-                onOpenAbout = { navController.navigate(Destinations.ABOUT.route) }
+                onOpenAbout = { navController.navigate(Destinations.ABOUT.route) },
+                onOpenChat = { navController.navigate(Destinations.CHAT.route) }
             )
         }
         composable(Destinations.SETTINGS.route) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
-                onOpenAbout = { navController.navigate(Destinations.ABOUT.route) }
+                onOpenAbout = { navController.navigate(Destinations.ABOUT.route) },
+                onOpenDebug = { navController.navigate(Destinations.DEBUG.route) }
             )
         }
         composable(Destinations.ABOUT.route) {
             AboutScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(Destinations.CHAT.route) {
+            ChatScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(Destinations.DEBUG.route) {
+            DebugScreen(
                 onBack = { navController.popBackStack() }
             )
         }

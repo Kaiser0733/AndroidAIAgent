@@ -13,8 +13,8 @@ android {
         applicationId = "com.kaiser.aiagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -79,6 +79,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
 
     implementation(libs.okhttp)
+    implementation(libs.okhttp.sse)
     implementation(libs.timber)
 
     debugImplementation(libs.androidx.ui.tooling)

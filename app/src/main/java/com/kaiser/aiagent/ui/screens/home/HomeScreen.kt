@@ -14,6 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Memory
@@ -63,6 +64,7 @@ import org.koin.androidx.compose.koinViewModel
 fun HomeScreen(
     onOpenSettings: () -> Unit,
     onOpenAbout: () -> Unit,
+    onOpenChat: () -> Unit,
     viewModel: HomeViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -106,7 +108,16 @@ fun HomeScreen(
 
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Primary action in v0.3 — open the chat.
                     Button(
+                        onClick = onOpenChat,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null)
+                        Spacer(Modifier.size(8.dp))
+                        Text("Open Chat")
+                    }
+                    OutlinedButton(
                         onClick = { viewModel.checkForUpdate() },
                         enabled = !state.checking,
                         modifier = Modifier.fillMaxWidth()

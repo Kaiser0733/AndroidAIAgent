@@ -1,18 +1,18 @@
 package com.kaiser.aiagent.ui.navigation
 
 /**
- * All navigation destinations for v0.1. The enum keeps route constants in
- * one place so screens and the nav graph stay in sync. New destinations
- * added in later versions should be appended here.
- *
- * Note: the route strings are also used by Compose Navigation as the
- * actual navigation keys, so they must be unique and stable.
+ * All navigation destinations. v0.3 adds:
+ *  - CHAT — the new chat surface.
+ *  - DEBUG — hidden debug page (reachable from Settings, not from
+ *    the bottom nav).
  */
 enum class Destinations(val route: String) {
     LAUNCH("launch"),
     HOME("home"),
     SETTINGS("settings"),
-    ABOUT("about");
+    ABOUT("about"),
+    CHAT("chat"),
+    DEBUG("debug");
 
     companion object {
         val startDestination: Destinations = LAUNCH

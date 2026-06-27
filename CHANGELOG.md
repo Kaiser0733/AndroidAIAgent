@@ -4,6 +4,118 @@ All notable changes to this project are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3] - 2026-06-27
+
+### Added — AI module
+- `data/ai/AiConfig.kt` — immutable config (apiKey, endpoint, model,
+  temperature, maxTokens, timeouts, retry policy).
+- `data/ai/AiSettings.kt` + `DataStoreAiSettings.kt` — DataStore-backed
+  persistence (app-private; API key never logged or committed).
+- `data/ai/AiModels.kt` — OpenAI-compatible request/response DTOs
+  (`AiRequest`, `AiResponse`, `AiMessage`, `AiChoice`, `AiDelta`,
+  `AiUsage`, `AiError`).
+- `data/ai/AiService.kt` — OkHttp + OkHttp-SSE client. Streaming via
+  `EventSources`, non-streaming with retry+backoff on 429/5xx/IO.
+- `data/ai/AiRepository.kt` — high-level façade. Resolves config from
+  `AiSettings`, exposes `chat()`, `streamChat()`, and `testConnection()`.
+
+### Added — Tool framework
+- `domain/tools/AgentTool.kt` — interface every tool implements.
+- `domain/tools/ToolCall.kt` + `ToolCallParser.kt` — standard JSON
+  tool-call format `{"tool":"...","arguments":{}}` and a permissive
+  parser that finds tool calls inside prose / code fences.
+- `domain/tools/ToolRegistry.kt` — mutable registry; renders the tool
+  catalog into the system prompt.
+- `domain/tools/ToolExecutor.kt` — runs tool calls, catches all
+  exceptions, returns `ToolResult` (always JSON-serializable).
+
+### Added — Demo tools (3, all read-only)
+- `tools/demo/GetTimeTool.kt` — returns current local time in ISO 8601.
+- `tools/demo/AppInfoTool.kt` — returns app version, build number,
+  application ID, build type.
+- `tools/demo/DeviceInfoTool.kt` — returns Android version, SDK level,
+  manufacturer, model, ABIs.
+
+### Added — Agent runtime
+- `domain/agent/AgentContext.kt` — per-turn working state + system
+  prompt builder (embeds the tool catalog and tool-call format spec).
+- `domain/agent/AgentState.kt` — UI-facing snapshot (busy,
+  streamingText, lastToolCall, lastToolResult, toolCallsThisTurn,
+  lastError).
+- `domain/agent/AgentRuntime.kt` — multi-turn loop: stream → detect
+  tool call → execute → append tool result → repeat. Caps at 5 tool
+  iterations per turn (anti-loop).
+
+### Added — Chat system
+- `data/chat/ConversationEntity.kt` + `MessageEntity.kt` + `MessageRole`
+  — persisted DTOs.
+- `data/chat/ConversationRepository.kt` — file-backed JSON store at
+  `filesDir/conversations/{id}.json`. CRUD + auto-title from first
+  user message.
+- `ui/screens/chat/ChatViewModel.kt` — owns active conversation,
+  streams assistant responses, persists user+assistant messages.
+- `ui/screens/chat/ChatScreen.kt` — message list with bubbles,
+  streaming indicator, copy action, new / delete conversation
+  actions, input bar with send button.
+- `ui/screens/chat/MarkdownText.kt` — minimal Markdown renderer
+  (headers, bold, italic, inline code, fenced code blocks, bullets,
+  numbered lists, blockquotes).
+
+### Added — Memory foundation
+- `data/memory/MemoryEntry.kt` — persisted DTO (id, type, content,
+  source, createdAt, tags).
+- `data/memory/MemoryRepository.kt` — file-backed JSON store at
+  `filesDir/memory/memories.json`. CRUD + StateFlow of entries.
+- `memory/MemoryManager.kt` — policy layer over the repository;
+  validates types (fact / preference / note). v0.3 supports only
+  manual storage; auto-extraction is a future concern.
+
+### Added — Debug screen (hidden)
+- `ui/screens/debug/DebugViewModel.kt` — aggregates snapshots of AI
+  config, agent state, registered tools, memory count, API status.
+- `ui/screens/debug/DebugScreen.kt` — reachable from Settings →
+  "Debug" button. Shows live runtime state, registered tool list,
+  and a "Test connection" button.
+
+### Added — Settings (AI section)
+- Settings screen now has an "AI Configuration" section with fields
+  for API Key (masked), Endpoint, Model, and a "Test Connection"
+  button. Saved via DataStore; the AiService picks up changes
+  immediately (no app restart needed).
+
+### Added — Navigation
+- `Destinations.CHAT` and `Destinations.DEBUG` added to the nav graph.
+- Home screen has a new primary "Open Chat" button.
+
+### Added — DI modules
+- `di/AiModule.kt`, `di/AgentModule.kt`, `di/ChatModule.kt`,
+  `di/MemoryModule.kt`, `di/ToolsModule.kt` — split out from
+  `AppModule.kt` for clarity. All registered in
+  `AndroidAIAgentApp.onCreate`.
+
+### Added — Future placeholders
+- `tools/future/FileToolsPlaceholder.kt`
+- `tools/future/AccessibilityToolsPlaceholder.kt`
+- `tools/future/AutomationToolsPlaceholder.kt`
+- `tools/future/WorkflowEnginePlaceholder.kt`
+
+Each contains a KDoc explaining the planned responsibilities. None
+are registered with the `ToolRegistry` at v0.3.
+
+### Changed
+- Bumped `versionCode` 2 → 3, `versionName` "0.2" → "0.3".
+- Added `okhttp-sse` 4.12.0 dependency for streaming.
+- `AndroidAIAgentApp.onCreate` now calls `registerTools(registry)`
+  after Koin starts to populate the `ToolRegistry`.
+- `HomeScreen` now takes `onOpenChat` callback.
+- `SettingsScreen` now takes `onOpenDebug` callback.
+- `SettingsViewModel` constructor now takes `AiRepository`.
+
+### Tags
+- Git tag `v0.3-alpha` is created on the `dev` branch (and
+  fast-forwarded to `main`). GitHub Release `v0.3-alpha` is published
+  with the APK as a release asset, marked as `make_latest=true`.
+
 ## [0.2] - 2026-06-27
 
 ### Added
