@@ -46,6 +46,7 @@ class ChatViewModel(
         val messages: List<UiMessage> = emptyList(),
         val streamingText: String = "",
         val busy: Boolean = false,
+        val statusText: String? = null,  // v0.5.5: shows "Loading model..." etc.
         val toast: String? = null
     )
 
@@ -147,8 +148,12 @@ class ChatViewModel(
                     conversationId = conv.id,
                     onDelta = { delta ->
                         _state.value = _state.value.copy(
-                            streamingText = _state.value.streamingText + delta
+                            streamingText = _state.value.streamingText + delta,
+                            statusText = null  // clear status once tokens arrive
                         )
+                    },
+                    onStatus = { status ->
+                        _state.value = _state.value.copy(statusText = status)
                     },
                     onFinal = { finalText ->
                         viewModelScope.launch {
@@ -201,10 +206,21 @@ class ChatViewModel(
                 throw e  // re-throw to properly cancel the coroutine
             } catch (t: Throwable) {
                 Timber.w(t, "sendMessage failed")
+                // v0.5.5: show error as a PERSISTENT chat message (not a
+                // vanishing toast) so the user can read it and copy it.
+                val errorMsg = "❌ ${t.message ?: t.javaClass.simpleName}"
+                val errorUiMsg = UiMessage(
+                    id = java.util.UUID.randomUUID().toString(),
+                    role = MessageRole.ASSISTANT,
+                    content = errorMsg,
+                    timestamp = System.currentTimeMillis()
+                )
                 _state.value = _state.value.copy(
                     busy = false,
                     streamingText = "",
-                    toast = "Error: ${t.message ?: t.javaClass.simpleName}"
+                    statusText = null,
+                    messages = _state.value.messages + errorUiMsg,
+                    toast = null  // no toast — the error is in the chat
                 )
             }
         }

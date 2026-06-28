@@ -76,7 +76,8 @@ class AgentRuntime(
         userMessage: String,
         conversationId: String? = null,
         onDelta: (String) -> Unit,
-        onFinal: (String) -> Unit
+        onFinal: (String) -> Unit,
+        onStatus: ((String) -> Unit)? = null
     ) {
         val systemPrompt = AgentContext.buildSystemPrompt(toolRegistry.describeForPrompt())
         val messages = mutableListOf<AiMessage>()
@@ -89,7 +90,7 @@ class AgentRuntime(
         _state.value = AgentState(busy = true, streamingText = "")
 
         try {
-            val finalText = runLoop(context, conversationId, onDelta)
+            val finalText = runLoop(context, conversationId, onDelta, onStatus)
             _state.value = AgentState.IDLE
             onFinal(finalText)
         } catch (t: Throwable) {
@@ -107,7 +108,8 @@ class AgentRuntime(
     private suspend fun runLoop(
         context: AgentContext,
         conversationId: String?,
-        onDelta: (String) -> Unit
+        onDelta: (String) -> Unit,
+        onStatus: ((String) -> Unit)? = null
     ): String {
         var iteration = 0
         while (true) {
@@ -128,7 +130,7 @@ class AgentRuntime(
             // Stream the model's response. Accumulate the full text.
             val accumulator = StringBuilder()
             try {
-                repository.streamChat(context.messages.toList()).collect { delta ->
+                repository.streamChat(context.messages.toList(), onStatus).collect { delta ->
                     accumulator.append(delta)
                     _state.value = _state.value.copy(streamingText = accumulator.toString())
                     onDelta(delta)

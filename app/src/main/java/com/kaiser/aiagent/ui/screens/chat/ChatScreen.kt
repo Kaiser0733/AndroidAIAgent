@@ -163,7 +163,7 @@ fun ChatScreen(
                 }
                 if (state.busy && state.streamingText.isEmpty()) {
                     item(key = "__thinking__") {
-                        ThinkingBubble()
+                        ThinkingBubble(statusText = state.statusText)
                     }
                 }
             }
@@ -328,7 +328,7 @@ private fun StreamingBubble(text: String) {
 }
 
 @Composable
-private fun ThinkingBubble() {
+private fun ThinkingBubble(statusText: String? = null) {
     Row(
         modifier = Modifier
             .background(
@@ -344,7 +344,7 @@ private fun ThinkingBubble() {
             strokeWidth = 2.dp
         )
         Text(
-            text = "Thinking…",
+            text = statusText ?: "Thinking…",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

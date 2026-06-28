@@ -76,39 +76,40 @@ class AiRepository(
     /**
      * Streaming chat. Emits incremental content deltas as they arrive.
      *
-     * Routes to LocalAiEngine if backend == LOCAL, otherwise to the
-     * cloud AiService.
+     * v0.5.5: added [onStatus] callback so the UI can show "Loading
+     * model..." while the local model loads (takes 10-30 seconds on
+     * mid-range devices).
      */
-    fun streamChat(messages: List<AiMessage>): Flow<String> = flow {
+    fun streamChat(
+        messages: List<AiMessage>,
+        onStatus: ((String) -> Unit)? = null
+    ): Flow<String> = flow {
         val cfg = config()
 
         if (cfg.backend == AiBackend.LOCAL) {
-            // On-device inference path.
             val modelPath = cfg.localModelPath
             if (modelPath.isNullOrBlank()) {
                 throw LocalAiException("No local model configured. Download one via Settings → Models.")
             }
 
-            // Load the model if not already loaded (or if the path changed).
+            // Load the model if not already loaded.
             if (!localEngine.isModelLoaded() || localEngine.getLoadedModelPath() != modelPath) {
+                onStatus?.invoke("Loading on-device model… (this takes 10-30 seconds on first use)")
                 val systemPrompt = messages.firstOrNull { it.role == "system" }?.content ?: ""
                 val loaded = localEngine.loadModel(modelPath, systemPrompt, cfg.temperature)
                 if (!loaded) {
                     val detail = localEngine.lastLoadError ?: "unknown error"
                     throw LocalAiException(
                         "Failed to load on-device model: $detail. " +
-                            "Make sure you downloaded a .litertlm file (not .task). " +
                             "If the error persists, try the Qwen3 0.6B model (smallest, most compatible)."
                     )
                 }
             }
 
-            // Find the last user message (local engine handles conversation
-            // state internally — we just send the latest user turn).
+            onStatus?.invoke("Generating response…")
             val lastUserMsg = messages.lastOrNull { it.role == "user" }?.content
                 ?: throw LocalAiException("No user message to send.")
 
-            // Emit tokens from the local engine.
             localEngine.sendMessage(lastUserMsg).collect { emit(it) }
         } else {
             // Cloud API path.
