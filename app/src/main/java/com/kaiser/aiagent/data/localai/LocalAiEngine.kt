@@ -119,8 +119,6 @@ class LocalAiEngine(private val context: Context) {
         val tokenChannel = Channel<String>(Channel.BUFFERED)
         var inferenceError: Throwable? = null
         var previousText = ""
-        // v0.5.8: tracks whether we're inside a <think> block (Qwen3 models)
-        val thinkState = ThinkState()
 
         val userMsg = Message.user(userMessage)
 
@@ -128,16 +126,14 @@ class LocalAiEngine(private val context: Context) {
             override fun onMessage(message: Message) {
                 val fullText = extractText(message)
                 if (fullText.length > previousText.length) {
-                    var delta = fullText.substring(previousText.length)
+                    val delta = fullText.substring(previousText.length)
                     previousText = fullText
-                    // v0.5.8: strip Qwen3 <think> tags from output.
-                    // Qwen3 models generate <think>reasoning</think> before
-                    // the actual answer. The reasoning is often gibberish on
-                    // small models and confuses the user. We hide it.
-                    delta = stripThinkTags(delta, thinkState)
-                    if (delta.isNotEmpty()) {
-                        tokenChannel.trySend(delta)
-                    }
+                    // v0.5.9: pass everything through without stripping.
+                    // The <think> tag stripping in v0.5.8 removed ALL output
+                    // because the 0.6B model puts everything inside <think>
+                    // and produces nothing after </think>. Better to show
+                    // the raw output than an empty box.
+                    tokenChannel.trySend(delta)
                 }
             }
 
@@ -196,75 +192,6 @@ class LocalAiEngine(private val context: Context) {
         engine = null
         currentModelPath = null
     }
-}
-
-/**
- * v0.5.8: Tracks state for stripping <think>...</think> tags from
- * Qwen3 model output. The tags can be split across multiple deltas,
- * so we need to track whether we're currently inside a think block
- * and buffer partial tags.
- */
-private class ThinkState {
-    var insideThink = false
-    var buffer = ""
-}
-
-/**
- * Strips <think>...</think> tags from a delta string. Handles tags
- * split across deltas using the [ThinkState] to track position.
- *
- * Returns the cleaned text (may be empty if the entire delta was
- * inside a think block).
- */
-private fun stripThinkTags(delta: String, state: ThinkState): String {
-    val result = StringBuilder()
-    var i = 0
-    val text = state.buffer + delta
-    state.buffer = ""
-
-    while (i < text.length) {
-        if (!state.insideThink) {
-            // Look for <think> opening tag
-            if (text.startsWith("<think>", i)) {
-                state.insideThink = true
-                i += 7  // skip "<think>"
-            } else if (text.startsWith("<think", i) && i + 6 < text.length) {
-                // Partial tag at the end — buffer it
-                if (i < text.length) {
-                    state.buffer = text.substring(i)
-                }
-                break
-            } else {
-                result.append(text[i])
-                i++
-            }
-        } else {
-            // Inside think block — look for </think> closing tag
-            if (text.startsWith("</think>", i)) {
-                state.insideThink = false
-                i += 8  // skip "</think>"
-            } else if (text.startsWith("</think", i) && i + 7 < text.length) {
-                // Partial closing tag — buffer it
-                state.buffer = text.substring(i)
-                break
-            } else {
-                // Inside think block — skip this character
-                i++
-            }
-        }
-    }
-
-    // Handle remaining partial buffer when not inside think
-    if (state.buffer.isEmpty() && !state.insideThink) {
-        // Check if there's a partial "<" at the end that could be start of <think>
-        val lastLt = text.lastIndexOf('<')
-        if (lastLt >= 0 && lastLt > i - 1 && text.length - lastLt < 7) {
-            state.buffer = text.substring(lastLt)
-            result.delete(result.length - (text.length - lastLt - state.buffer.length).coerceAtLeast(0), result.length)
-        }
-    }
-
-    return result.toString()
 }
 
 class LocalAiException(message: String, cause: Throwable? = null) : Exception(message, cause)
