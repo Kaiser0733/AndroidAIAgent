@@ -92,11 +92,12 @@ class LocalAiEngine(private val context: Context) {
 
             Timber.i("Loading on-device model: %s (%d bytes)", modelPath, modelFile.length())
 
-            // Create the engine config. Use GPU backend by default —
-            // litertlm falls back to CPU automatically if GPU is unavailable.
+            // v0.5.3: use CPU backend by default. GPU backend fails on
+            // many mid-range devices with obscure native errors. CPU is
+            // slower but much more reliable. Users can override later.
             val engineConfig = EngineConfig(
                 modelPath = modelPath,
-                backend = Backend.GPU(),
+                backend = Backend.CPU(),
                 visionBackend = null,
                 audioBackend = null,
                 maxNumTokens = 1024,
@@ -127,11 +128,17 @@ class LocalAiEngine(private val context: Context) {
             Timber.i("On-device model loaded successfully")
             true
         } catch (e: Exception) {
-            Timber.e(e, "Failed to load on-device model")
+            Timber.e(e, "Failed to load on-device model: %s", e.message)
+            // v0.5.3: store the actual error so AiRepository can surface it
+            lastLoadError = e.message ?: e.javaClass.simpleName
             close()
             false
         }
     }
+
+    /** v0.5.3: stores the last model-load error for diagnostics. */
+    var lastLoadError: String? = null
+        private set
 
     /**
      * Sends a user message and streams the response token-by-token.

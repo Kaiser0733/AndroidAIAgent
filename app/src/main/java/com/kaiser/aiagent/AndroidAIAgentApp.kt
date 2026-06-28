@@ -12,6 +12,7 @@ import com.kaiser.aiagent.di.memoryModule
 import com.kaiser.aiagent.di.registerAllTools
 import com.kaiser.aiagent.di.toolsModule
 import com.kaiser.aiagent.domain.tools.ToolRegistry
+import com.kaiser.aiagent.data.localai.ModelManager
 import org.koin.android.ext.android.get
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
@@ -53,10 +54,18 @@ class AndroidAIAgentApp : Application() {
         }
 
         // ---- Tool registration (v0.3) -----------------------------------
-        // After Koin is up, register every tool singleton with the
-        // registry so the agent can describe and invoke them.
         val registry: ToolRegistry = get()
         registerAllTools(registry)
+
+        // ---- v0.5.3: clean up old .task files from v0.5.1/v0.5.2 -------
+        // The old versions downloaded .task files (wrong format for litertlm).
+        // Delete them so they don't waste disk space.
+        try {
+            val modelManager: ModelManager = get()
+            modelManager.cleanupOldTaskFiles()
+        } catch (e: Exception) {
+            Timber.w(e, "Failed to clean up old model files")
+        }
 
         Timber.i("AndroidAIAgentApp initialised — v${BuildConfig.VERSION_NAME}")
         Timber.i("Registered ${registry.all().size} tools: ${registry.all().joinToString { it.name }}")

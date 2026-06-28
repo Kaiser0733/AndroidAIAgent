@@ -39,10 +39,16 @@ class ModelManager(private val context: Context) {
 
     /**
      * Returns the local file path for a model, or null if not downloaded.
+     * v0.5.3: uses .litertlm extension (was .task — wrong format).
      */
     fun getModelPath(modelId: String): String? {
-        val file = File(modelsDir, "$modelId.task")
-        return if (file.exists() && file.length() > 0) file.absolutePath else null
+        // Check .litertlm (current format)
+        val litertlmFile = File(modelsDir, "$modelId.litertlm")
+        if (litertlmFile.exists() && litertlmFile.length() > 0) return litertlmFile.absolutePath
+        // Also check .task (legacy v0.5.1-v0.5.2 downloads — will be cleaned up)
+        val taskFile = File(modelsDir, "$modelId.task")
+        if (taskFile.exists() && taskFile.length() > 0) return taskFile.absolutePath
+        return null
     }
 
     /** Returns true if the given model is fully downloaded. */
@@ -50,9 +56,24 @@ class ModelManager(private val context: Context) {
 
     /** Returns the list of model IDs that are downloaded and ready. */
     fun getDownloadedModelIds(): List<String> {
-        return modelsDir.listFiles { f -> f.isFile && f.name.endsWith(".task") }
+        return modelsDir.listFiles { f -> f.isFile && (f.name.endsWith(".litertlm") || f.name.endsWith(".task")) }
             ?.map { it.nameWithoutExtension }
             ?: emptyList()
+    }
+
+    /**
+     * v0.5.3: deletes old .task files from v0.5.1/v0.5.2 that used the
+     * wrong format. Called on app startup to clean up stale downloads.
+     */
+    fun cleanupOldTaskFiles() {
+        modelsDir.listFiles { f -> f.name.endsWith(".task") }?.forEach { f ->
+            Timber.i("Cleaning up old .task file: %s", f.name)
+            f.delete()
+        }
+        modelsDir.listFiles { f -> f.name.endsWith(".task.tmp") }?.forEach { f ->
+            Timber.i("Cleaning up old .task.tmp partial: %s", f.name)
+            f.delete()
+        }
     }
 
     /** Sets the active model (the one that will be loaded by LocalAiEngine). */
@@ -80,8 +101,9 @@ class ModelManager(private val context: Context) {
      * to disk to avoid loading the entire file into memory.
      */
     suspend fun download(model: ModelInfo): String? = withContext(Dispatchers.IO) {
-        val targetFile = File(modelsDir, "${model.id}.task")
-        val tempFile = File(modelsDir, "${model.id}.task.tmp")
+        val ext = model.fileExtension  // ".litertlm"
+        val targetFile = File(modelsDir, "${model.id}$ext")
+        val tempFile = File(modelsDir, "${model.id}$ext.tmp")
 
         // Check for an existing partial download to resume from.
         val existingBytes = if (tempFile.exists()) tempFile.length() else 0L
@@ -218,20 +240,24 @@ class ModelManager(private val context: Context) {
      * Returns 0 if no partial download exists.
      */
     fun getPartialDownloadBytes(modelId: String): Long {
-        val tempFile = File(modelsDir, "$modelId.task.tmp")
-        return if (tempFile.exists()) tempFile.length() else 0L
+        val tempFile = File(modelsDir, "$modelId.litertlm.tmp")
+        if (tempFile.exists()) return tempFile.length()
+        val oldTemp = File(modelsDir, "$modelId.task.tmp")
+        return if (oldTemp.exists()) oldTemp.length() else 0L
     }
 
     /**
-     * Returns true if a partial download exists for the given model
-     * (i.e. a previous download was interrupted and can be resumed).
+     * Returns true if a partial download exists for the given model.
      */
     fun hasPartialDownload(modelId: String): Boolean = getPartialDownloadBytes(modelId) > 0
 
     /** Deletes a downloaded model file. Returns true if deleted. */
     fun deleteModel(modelId: String): Boolean {
-        val file = File(modelsDir, "$modelId.task")
-        val deleted = file.delete()
+        var deleted = false
+        File(modelsDir, "$modelId.litertlm").let { if (it.exists()) deleted = it.delete() }
+        File(modelsDir, "$modelId.litertlm.tmp").let { if (it.exists()) it.delete() }
+        File(modelsDir, "$modelId.task").let { if (it.exists()) { it.delete(); deleted = true } }
+        File(modelsDir, "$modelId.task.tmp").let { if (it.exists()) it.delete() }
         if (deleted && _activeModelId.value == modelId) {
             _activeModelId.value = null
         }

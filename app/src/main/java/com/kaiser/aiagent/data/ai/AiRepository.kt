@@ -94,7 +94,12 @@ class AiRepository(
                 val systemPrompt = messages.firstOrNull { it.role == "system" }?.content ?: ""
                 val loaded = localEngine.loadModel(modelPath, systemPrompt, cfg.temperature)
                 if (!loaded) {
-                    throw LocalAiException("Failed to load on-device model. The model file may be corrupted.")
+                    val detail = localEngine.lastLoadError ?: "unknown error"
+                    throw LocalAiException(
+                        "Failed to load on-device model: $detail. " +
+                            "Make sure you downloaded a .litertlm file (not .task). " +
+                            "If the error persists, try the Qwen3 0.6B model (smallest, most compatible)."
+                    )
                 }
             }
 
