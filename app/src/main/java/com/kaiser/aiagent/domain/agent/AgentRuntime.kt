@@ -88,7 +88,7 @@ class AgentRuntime(
         // limit, causing "stuck on thinking" (the API silently fails or
         // returns an error that gets swallowed).
         // Keep only the last 6 messages of history (3 user + 3 assistant).
-        val maxHistoryMessages = 6
+        val maxHistoryMessages = 4
         val truncatedHistory = if (history.size > maxHistoryMessages) {
             Timber.i("Truncating history from %d to %d messages", history.size, maxHistoryMessages)
             history.takeLast(maxHistoryMessages)
@@ -224,12 +224,23 @@ class AgentRuntime(
                     // Append the tool result as a user message (text-based tool
                     // calling doesn't use the tool role — see v0.3.3 commit msg).
                     val successOrError = if (result.success) "succeeded" else "failed"
+                    // v0.5.14: truncate tool results to 800 chars before sending
+                    // to the model. File listings and search results can be
+                    // thousands of tokens — this was causing Groq rate limit
+                    // hits ("wait 1600 seconds") because each request was
+                    // enormous. 800 chars is enough for the model to
+                    // understand the result and answer the user.
+                    val truncatedResult = if (result.data.length > 800) {
+                        result.data.take(800) + "\n... (truncated, ${result.data.length - 800} more chars)"
+                    } else {
+                        result.data
+                    }
                     context.messages.add(
                         AiMessage(
                             role = "user",
                             content = buildString {
                                 appendLine("The ${call.tool} tool $successOrError. Result:")
-                                appendLine(result.render())
+                                appendLine(truncatedResult)
                                 appendLine()
                                 appendLine("Using this result, answer the user's original question in plain English. Do not call any more tools. Do not repeat yourself.")
                             }
