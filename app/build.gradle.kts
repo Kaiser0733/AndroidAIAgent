@@ -1,8 +1,18 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// Persistent signing config — survives sandbox rebuilds.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -22,6 +32,18 @@ android {
         }
     }
 
+    signingConfigs {
+        create("persistentDebug") {
+            val keystorePath = keystoreProperties.getProperty("debugKeystorePath")
+            if (keystorePath != null && file(keystorePath).exists()) {
+                storeFile = file(keystorePath)
+                storePassword = keystoreProperties.getProperty("debugKeystorePassword")
+                keyAlias = keystoreProperties.getProperty("debugKeyAlias")
+                keyPassword = keystoreProperties.getProperty("debugKeyPassword")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -34,6 +56,10 @@ android {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            val keystorePath = keystoreProperties.getProperty("debugKeystorePath")
+            if (keystorePath != null && file(keystorePath).exists()) {
+                signingConfig = signingConfigs.getByName("persistentDebug")
+            }
         }
     }
 
