@@ -16,6 +16,7 @@ import com.kaiser.aiagent.ui.screens.chat.ChatScreen
 import com.kaiser.aiagent.ui.screens.debug.DebugScreen
 import com.kaiser.aiagent.ui.screens.home.HomeScreen
 import com.kaiser.aiagent.ui.screens.launch.LaunchScreen
+import com.kaiser.aiagent.ui.screens.models.ModelsScreen
 import com.kaiser.aiagent.ui.screens.settings.SettingsScreen
 import com.kaiser.aiagent.ui.theme.AndroidAIAgentTheme
 
@@ -67,7 +68,8 @@ private fun AppNavGraph() {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onOpenAbout = { navController.navigate(Destinations.ABOUT.route) },
-                onOpenDebug = { navController.navigate(Destinations.DEBUG.route) }
+                onOpenDebug = { navController.navigate(Destinations.DEBUG.route) },
+                onOpenModels = { navController.navigate(Destinations.MODELS.route) }
             )
         }
         composable(Destinations.ABOUT.route) {
@@ -82,6 +84,11 @@ private fun AppNavGraph() {
         }
         composable(Destinations.DEBUG.route) {
             DebugScreen(
+                onBack = { navController.popBackStack() }
+            )
+        }
+        composable(Destinations.MODELS.route) {
+            ModelsScreen(
                 onBack = { navController.popBackStack() }
             )
         }

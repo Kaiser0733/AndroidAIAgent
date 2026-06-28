@@ -25,10 +25,10 @@ android {
 
     defaultConfig {
         applicationId = "com.kaiser.aiagent"
-        minSdk = 26
+        minSdk = 26  // Kept at 26 for backward compat; litertlm requires 32+ but we guard at runtime
         targetSdk = 34
-        versionCode = 17
-        versionName = "0.4.6"
+        versionCode = 18
+        versionName = "0.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -78,6 +78,9 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        // v0.5: litertlm 0.13.1 was compiled with Kotlin 2.3; our compiler
+        // is 2.1. Skip the metadata version check so we can consume it.
+        freeCompilerArgs = listOf("-Xskip-metadata-version-check")
     }
 
     buildFeatures {
@@ -122,6 +125,13 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
     implementation(libs.timber)
+
+    // v0.5: On-device LLM inference via Google's LiteRT-LM (same SDK
+    // used by Google's own Edge Gallery app). Lets the agent run models
+    // like Gemma-3n-E2B entirely on-device — no API key, no rate limits,
+    // no network needed. The native lib (liblitertlm_jni.so) is ~20 MB
+    // and only loaded on devices running API 32+.
+    implementation(libs.litertlm)
 
     // v0.4: unit testing
     testImplementation("junit:junit:4.13.2")

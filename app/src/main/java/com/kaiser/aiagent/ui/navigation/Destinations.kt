@@ -12,7 +12,8 @@ enum class Destinations(val route: String) {
     SETTINGS("settings"),
     ABOUT("about"),
     CHAT("chat"),
-    DEBUG("debug");
+    DEBUG("debug"),
+    MODELS("models");
 
     companion object {
         val startDestination: Destinations = LAUNCH

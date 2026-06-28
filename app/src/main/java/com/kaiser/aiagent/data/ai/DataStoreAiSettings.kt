@@ -13,15 +13,9 @@ import kotlinx.coroutines.flow.map
 private val Context.aiSettingsStore by preferencesDataStore("ai_settings")
 
 /**
- * DataStore-backed implementation of [AiSettings]. The API key is stored
- * in plain Preferences DataStore (which is app-private on Android). For
- * a future hardening pass we can migrate to EncryptedSharedPreferences
- * or the Android Keystore — the [AiSettings] interface makes that swap
- * transparent to callers.
+ * DataStore-backed implementation of [AiSettings].
  *
- * v0.3.1 added `topP` and `extraBody` keys. Both default to "unset"
- * (topP = -1.0, extraBody = empty string) so existing installs continue
- * to work without migration.
+ * v0.5 adds `backend` and `localModelPath` keys for on-device AI support.
  */
 class DataStoreAiSettings(private val context: Context) : AiSettings {
 
@@ -30,9 +24,12 @@ class DataStoreAiSettings(private val context: Context) : AiSettings {
         val ENDPOINT = stringPreferencesKey("endpoint")
         val MODEL = stringPreferencesKey("model")
         val TEMPERATURE = doublePreferencesKey("temperature")
-        val TOP_P = doublePreferencesKey("top_p")             // -1 = unset
-        val MAX_TOKENS = intPreferencesKey("max_tokens")      // -1 = unset
-        val EXTRA_BODY = stringPreferencesKey("extra_body")   // "" = unset
+        val TOP_P = doublePreferencesKey("top_p")
+        val MAX_TOKENS = intPreferencesKey("max_tokens")
+        val EXTRA_BODY = stringPreferencesKey("extra_body")
+        // v0.5
+        val BACKEND = stringPreferencesKey("backend")           // "CLOUD" or "LOCAL"
+        val LOCAL_MODEL_PATH = stringPreferencesKey("local_model_path")
     }
 
     private fun snapshot(prefs: Preferences): AiConfig = AiConfig(
@@ -42,7 +39,9 @@ class DataStoreAiSettings(private val context: Context) : AiSettings {
         temperature = prefs[Keys.TEMPERATURE] ?: 0.7,
         topP = prefs[Keys.TOP_P]?.takeIf { it > 0 },
         maxTokens = prefs[Keys.MAX_TOKENS]?.takeIf { it > 0 },
-        extraBody = prefs[Keys.EXTRA_BODY] ?: AiConfig.DEFAULT_EXTRA_BODY
+        extraBody = prefs[Keys.EXTRA_BODY] ?: AiConfig.DEFAULT_EXTRA_BODY,
+        backend = prefs[Keys.BACKEND]?.let { runCatching { AiBackend.valueOf(it) }.getOrNull() } ?: AiBackend.CLOUD,
+        localModelPath = prefs[Keys.LOCAL_MODEL_PATH]
     )
 
     override val configFlow: Flow<AiConfig> = context.aiSettingsStore.data.map { snapshot(it) }
@@ -57,6 +56,8 @@ class DataStoreAiSettings(private val context: Context) : AiSettings {
             prefs[Keys.TOP_P] = next.topP ?: -1.0
             prefs[Keys.MAX_TOKENS] = next.maxTokens ?: -1
             prefs[Keys.EXTRA_BODY] = next.extraBody
+            prefs[Keys.BACKEND] = next.backend.name
+            prefs[Keys.LOCAL_MODEL_PATH] = next.localModelPath ?: ""
         }
     }
 }

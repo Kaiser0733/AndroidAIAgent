@@ -14,6 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -51,6 +52,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenAbout: () -> Unit,
     onOpenDebug: () -> Unit,
+    onOpenModels: () -> Unit,
     viewModel: SettingsViewModel = koinViewModel()
 ) {
     val state by viewModel.state.collectAsState()
@@ -276,9 +278,22 @@ fun SettingsScreen(
                 ) { Text("Save changes") }
             }
 
-            // ---- Debug entry --------------------------------------
+            // ---- On-Device Models entry (v0.5) --------------------
             item {
                 Spacer(Modifier.height(16.dp))
+                OutlinedButton(
+                    onClick = onOpenModels,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.Psychology, contentDescription = null)
+                    Spacer(Modifier.height(0.dp))
+                    Text("  On-Device Models (Local AI)")
+                }
+            }
+
+            // ---- Debug entry --------------------------------------
+            item {
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(
                     onClick = onOpenDebug,
                     modifier = Modifier.fillMaxWidth()
