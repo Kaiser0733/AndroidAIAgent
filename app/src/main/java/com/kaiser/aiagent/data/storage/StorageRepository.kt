@@ -85,9 +85,30 @@ class StorageRepository(private val context: Context) {
     /** Returns the absolute path of a [StorageRoot] on this device, or null. */
     fun rootPath(root: StorageRoot): String? = when (root) {
         StorageRoot.INTERNAL -> context.filesDir.absolutePath
-        else -> try {
-            Environment.getExternalStoragePublicDirectory(root.envConstant)?.absolutePath
-        } catch (e: Exception) { null }
+        else -> {
+            // v0.4.2: try multiple strategies for finding the public dir.
+            // Some OEM ROMs don't honor Environment.getExternalStoragePublicDirectory()
+            // reliably; on Android 13+ scoped storage may further restrict.
+            // Strategy:
+            //   1. Try Environment.getExternalStoragePublicDirectory (legacy)
+            //   2. If that path doesn't exist, try /storage/emulated/0/<name> directly
+            //   3. If neither exists, return null
+            val envName = root.envConstant ?: return null
+            val candidates = listOfNotNull(
+                try {
+                    Environment.getExternalStoragePublicDirectory(envName)?.absolutePath
+                } catch (e: Exception) { null },
+                "/storage/emulated/0/$envName",
+                "/sdcard/$envName"
+            )
+            // Return the first candidate that actually exists and is a directory.
+            candidates.firstOrNull { p ->
+                try {
+                    val f = java.io.File(p)
+                    f.exists() && f.isDirectory
+                } catch (e: Exception) { false }
+            } ?: candidates.firstOrNull()  // fall back to the first candidate even if it doesn't exist
+        }
     }
 
     /** A single file or folder entry returned by [listFiles] / [searchFiles]. */

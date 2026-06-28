@@ -40,8 +40,32 @@ class ReadTextFileTool(storage: StorageRepository) : BaseFileTool(storage) {
                     "Use file_info for binary files."
             )
         }
+        val hasAccess = storage.hasFullStorageAccess()
+        val fileExists = java.io.File(path).exists()
+        val canRead = java.io.File(path).canRead()
         val content = storage.readTextFile(path)
-            ?: return errorResult("File not found, not readable, or empty: $path")
+        if (content == null) {
+            // v0.4.2: include detailed diagnostic info in the error.
+            val diag = buildString {
+                append("File not found, not readable, or empty: $path\n")
+                append("Diagnostics:\n")
+                append("- File exists: $fileExists\n")
+                append("- App can read: $canRead\n")
+                append("- All files access granted: $hasAccess\n")
+                if (!hasAccess) {
+                    append("\nThe app does not have 'All files access' permission. ")
+                    append("Tell the user to open Settings → AI Configuration → 'Grant all files access' ")
+                    append("and toggle it on, then retry.")
+                } else if (fileExists && !canRead) {
+                    append("\nThe file exists but the app cannot read it. This may be a permissions issue ")
+                    append("with the specific file. Tell the user to check the file's permissions.")
+                } else if (!fileExists) {
+                    append("\nThe file does not exist at the given path. Use list_files or search_files ")
+                    append("to find the correct path.")
+                }
+            }
+            return errorResult(diag)
+        }
         val obj = buildJsonObject {
             put("path", path)
             put("bytes_read", content.length)

@@ -31,6 +31,8 @@ class ListFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
             return errorResult("Missing 'path' argument.")
         }
         val result = storage.listFiles(path)
+        val hasAccess = storage.hasFullStorageAccess()
+        val pathExists = java.io.File(path).exists()
         val filesArr = buildJsonArray {
             for (f in result.files) add(f.toJson())
         }
@@ -45,6 +47,15 @@ class ListFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
             put("file_count", result.files.size)
             put("total_in_dir", result.totalInDir)
             put("truncated", result.truncated)
+            put("full_storage_access", hasAccess)
+            put("path_exists", pathExists)
+            // v0.4.2: include diagnostic warnings so the agent can
+            // tell the user what's wrong.
+            if (!pathExists) {
+                put("warning", "Path '$path' does not exist. Use list_storage_roots to see valid paths.")
+            } else if (!hasAccess && result.totalInDir == 0) {
+                put("warning", "Path exists but appears empty. The app may not have 'All files access' permission — only app-created files are visible. Tell the user to open Settings → AI Configuration → 'Grant all files access'.")
+            }
         }
         return ToolResult(
             success = true,
@@ -53,7 +64,9 @@ class ListFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
                 "path" to path,
                 "file_count" to result.files.size.toString(),
                 "folder_count" to result.folders.size.toString(),
-                "truncated" to result.truncated.toString()
+                "truncated" to result.truncated.toString(),
+                "full_storage_access" to hasAccess.toString(),
+                "path_exists" to pathExists.toString()
             )
         )
     }
