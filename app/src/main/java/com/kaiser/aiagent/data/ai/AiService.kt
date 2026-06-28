@@ -1,10 +1,11 @@
 package com.kaiser.aiagent.data.ai
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -67,19 +68,72 @@ class AiService {
      * opens an SSE connection and emits each `delta.content` string as it
      * arrives. The Flow completes when the server closes the stream.
      *
-     * Retries are NOT applied to streaming — once the stream has started,
-     * a failure is terminal. (Pre-stream connection failures will still
-     * throw immediately.)
+     * v0.4.4: now retries on 429 / 5xx / IOException during the
+     * connection phase (before any SSE events arrive). Once streaming
+     * starts, failures are terminal (no retry — would lose partial output).
+     * The retry uses the `Retry-After` header if the provider sent one,
+     * otherwise exponential backoff.
      */
-    fun streamChat(config: AiConfig, request: AiRequest): Flow<String> = callbackFlow {
+    fun streamChat(config: AiConfig, request: AiRequest): Flow<String> = flow {
         val client = OkHttpClient.Builder()
             .connectTimeout(config.connectTimeoutSec, TimeUnit.SECONDS)
-            .readTimeout(0, TimeUnit.SECONDS)  // no read timeout for streams
+            .readTimeout(0, TimeUnit.SECONDS)
             .build()
 
         val req = buildRequest(config, request.copy(stream = true))
-        val factory = EventSources.createFactory(client)
 
+        // v0.4.4: retry the SSE connection up to config.maxRetries times
+        // during the connection phase. Once streaming starts, failures are
+        // terminal (no retry — would lose partial output). The retry uses
+        // the `Retry-After` header if the provider sent one, otherwise
+        // exponential backoff.
+        var lastError: Throwable? = null
+        var connected = false
+        for (attempt in 0..config.maxRetries) {
+            try {
+                val response = client.newCall(req).execute()
+                if (response.isSuccessful) {
+                    response.close()
+                    connected = true
+                    break
+                }
+                val code = response.code
+                val retryAfter = response.header("Retry-After")?.toLongOrNull()
+                response.close()
+                val isRetryable = code == 429 || code in 500..599
+                if (!isRetryable || attempt == config.maxRetries) {
+                    throw AiException(friendlyHttpMessage(code, null, retryAfter))
+                }
+                lastError = AiException("HTTP $code (retryable)")
+                val delayMs = retryAfter?.times(1000) ?: config.retryBaseDelayMs * (1L shl attempt)
+                Timber.i("Stream pre-flight got %d, retrying in %d ms", code, delayMs)
+                kotlinx.coroutines.delay(delayMs)
+            } catch (e: java.io.IOException) {
+                if (attempt == config.maxRetries) {
+                    throw AiException(
+                        "Network error after ${attempt + 1} attempts: " +
+                            "${e.javaClass.simpleName} — ${e.message?.take(120)}",
+                        e
+                    )
+                }
+                lastError = e
+                val delayMs = config.retryBaseDelayMs * (1L shl attempt)
+                Timber.i("Stream pre-flight IO error, retrying in %d ms", delayMs)
+                kotlinx.coroutines.delay(delayMs)
+            }
+        }
+        if (!connected) {
+            throw AiException("Could not connect after ${config.maxRetries + 1} attempts", lastError)
+        }
+
+        // Open the SSE stream. Use a Channel to bridge the callback-based
+        // EventSource to the flow-based emission. The flow collects from
+        // the channel and propagates any failure.
+        val channel = kotlinx.coroutines.channels.Channel<String>(kotlinx.coroutines.channels.Channel.BUFFERED)
+        val pending = CompletableDeferred<Unit>()
+        val failure = CompletableDeferred<Throwable>()
+
+        val factory = EventSources.createFactory(client)
         val source = factory.newEventSource(req, object : EventSourceListener() {
             override fun onEvent(
                 eventSource: EventSource,
@@ -89,6 +143,7 @@ class AiService {
             ) {
                 if (data == "[DONE]") {
                     eventSource.cancel()
+                    pending.complete(Unit)
                     channel.close()
                     return
                 }
@@ -96,7 +151,7 @@ class AiService {
                     val parsed = json.decodeFromString(AiResponse.serializer(), data)
                     val delta = parsed.choices.firstOrNull()?.delta?.content
                     if (!delta.isNullOrEmpty()) {
-                        trySend(delta)
+                        channel.trySend(delta)
                     }
                 } catch (e: Exception) {
                     Timber.w(e, "Failed to parse SSE chunk: %s", data)
@@ -104,44 +159,62 @@ class AiService {
             }
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                // v0.4.1: produce a user-friendly error message for
-                // common failure modes (429 rate limit, 401 auth, etc.)
-                // instead of the opaque "SSE failure: 429".
                 val code = response?.code
-                val msg = when (code) {
-                    429 -> "Rate limited by the AI provider (HTTP 429). " +
-                        "You've sent too many requests in a short window. " +
-                        "Wait 30-60 seconds and try again. If this keeps " +
-                        "happening, consider switching to a different provider " +
-                        "in Settings (Groq's free tier is 30 req/min; NVIDIA's " +
-                        "free tier has different limits)."
-                    401 -> "Authentication failed (HTTP 401). Your API key is " +
-                        "missing, invalid, or expired. Open Settings → AI " +
-                        "Configuration and re-enter your API key."
-                    403 -> "Forbidden (HTTP 403). Your API key may not have " +
-                        "access to the requested model. Check the Model field " +
-                        "in Settings → AI Configuration."
-                    404 -> "Not found (HTTP 404). The API endpoint URL is " +
-                        "wrong. Check the Endpoint field in Settings → AI " +
-                        "Configuration — it should end with /chat/completions."
-                    500, 502, 503, 504 -> "The AI provider's server errored " +
-                        "(HTTP $code). Try again in a few seconds."
-                    null -> "Network error: ${t?.message ?: "unknown"}"
-                    else -> "SSE failure: HTTP $code — ${t?.message ?: "no detail"}"
-                }
+                val msg = friendlyHttpMessage(code, t, response?.header("Retry-After")?.toLongOrNull())
                 Timber.w(t, msg)
-                channel.close(AiException(msg, t))
+                failure.complete(AiException(msg, t))
+                channel.close()
             }
 
             override fun onClosed(eventSource: EventSource) {
+                pending.complete(Unit)
                 channel.close()
             }
         })
 
-        awaitClose {
+        try {
+            // Emit deltas as they arrive. If the stream fails, throw the
+            // failure exception (which will propagate to the collector).
+            while (true) {
+                kotlinx.coroutines.selects.select<Unit> {
+                    channel.onReceive { emit(it) }
+                    pending.onAwait { /* done */ }
+                    failure.onAwait { throw it }
+                }
+                if (pending.isCompleted || failure.isCompleted) break
+            }
+        } finally {
             source.cancel()
+            channel.close()
         }
     }.flowOn(Dispatchers.IO)
+
+    /**
+     * Builds a user-friendly error message for an HTTP failure, honoring
+     * the `Retry-After` header if present.
+     */
+    private fun friendlyHttpMessage(code: Int?, t: Throwable?, retryAfterSec: Long?): String {
+        return when (code) {
+            429 -> {
+                val wait = retryAfterSec?.let { "Wait $it seconds" }
+                    ?: "Wait 30-60 seconds"
+                "Rate limited by the AI provider (HTTP 429). $wait and try again. " +
+                    "Groq's free tier is 30 requests/minute. If you keep hitting the " +
+                    "limit, consider switching providers in Settings (NVIDIA NIM, " +
+                    "Google Gemini, OpenRouter all have free tiers with different limits)."
+            }
+            401 -> "Authentication failed (HTTP 401). Your API key is missing, invalid, or expired. " +
+                "Open Settings → AI Configuration and re-enter your API key."
+            403 -> "Forbidden (HTTP 403). Your API key may not have access to the requested model. " +
+                "Check the Model field in Settings → AI Configuration."
+            404 -> "Not found (HTTP 404). The API endpoint URL is wrong. Check the Endpoint field " +
+                "in Settings → AI Configuration — it should end with /chat/completions."
+            500, 502, 503, 504 -> "The AI provider's server errored (HTTP $code). " +
+                "Try again in a few seconds."
+            null -> "Network error: ${t?.message ?: "unknown"}"
+            else -> "HTTP $code — ${t?.message ?: "no detail"}"
+        }
+    }
 
     // ---- Helpers --------------------------------------------------------
 
