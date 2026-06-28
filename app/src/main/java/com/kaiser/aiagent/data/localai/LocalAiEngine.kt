@@ -16,6 +16,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
 
@@ -48,73 +49,80 @@ class LocalAiEngine(private val context: Context) {
 
     /**
      * Loads a .litertlm model file. Takes 10-30 seconds on mid-range devices.
-     * Must be called on a background thread.
+     *
+     * v0.5.10: explicitly runs on Dispatchers.IO to prevent ANR
+     * ("AI Agent is not responding" system dialog). The native
+     * Engine.initialize() call blocks for 10-30 seconds — if it
+     * runs on the main thread, Android shows the ANR dialog.
      */
-    suspend fun loadModel(modelPath: String, systemPrompt: String, temperature: Double = 0.7): Boolean {
-        if (!isSupported()) return false
+    suspend fun loadModel(modelPath: String, systemPrompt: String, temperature: Double = 0.7): Boolean =
+        withContext(Dispatchers.IO) {
+            if (!isSupported()) return@withContext false
 
-        val modelFile = File(modelPath)
-        if (!modelFile.exists()) {
-            lastLoadError = "Model file not found: $modelPath"
-            return false
+            val modelFile = File(modelPath)
+            if (!modelFile.exists()) {
+                lastLoadError = "Model file not found: $modelPath"
+                return@withContext false
+            }
+
+            try {
+                close()
+                Timber.i("Loading on-device model: %s (%d bytes)", modelPath, modelFile.length())
+
+                val engineConfig = EngineConfig(
+                    modelPath = modelPath,
+                    backend = Backend.CPU(),
+                    visionBackend = null,
+                    audioBackend = null,
+                    maxNumTokens = 4096,
+                    maxNumImages = null,
+                    cacheDir = File(context.cacheDir, "litertlm").absolutePath
+                )
+
+                val newEngine = Engine(engineConfig)
+                newEngine.initialize()
+                engine = newEngine
+                currentModelPath = modelPath
+
+                val systemMessage = Message.system(systemPrompt)
+                val samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = temperature, seed = 0)
+                val convConfig = ConversationConfig(
+                    systemInstruction = null,
+                    initialMessages = listOf(systemMessage),
+                    tools = emptyList(),
+                    samplerConfig = samplerConfig,
+                    automaticToolCalling = false,
+                    channels = emptyList(),
+                    extraContext = emptyMap(),
+                    loraConfig = null
+                )
+                conversation = newEngine.createConversation(convConfig)
+
+                Timber.i("On-device model loaded successfully")
+                true
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to load on-device model: %s", e.message)
+                lastLoadError = e.message ?: e.javaClass.simpleName
+                close()
+                false
+            }
         }
-
-        return try {
-            close()
-            Timber.i("Loading on-device model: %s (%d bytes)", modelPath, modelFile.length())
-
-            val engineConfig = EngineConfig(
-                modelPath = modelPath,
-                backend = Backend.CPU(),
-                visionBackend = null,
-                audioBackend = null,
-                maxNumTokens = 4096,  // v0.5.7: was 1024, caused "Input token ids too long" because system prompt alone is ~1288 tokens
-                maxNumImages = null,
-                cacheDir = File(context.cacheDir, "litertlm").absolutePath
-            )
-
-            val newEngine = Engine(engineConfig)
-            newEngine.initialize()
-            engine = newEngine
-            currentModelPath = modelPath
-
-            val systemMessage = Message.system(systemPrompt)
-            val samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = temperature, seed = 0)
-            val convConfig = ConversationConfig(
-                systemInstruction = null,
-                initialMessages = listOf(systemMessage),
-                tools = emptyList(),
-                samplerConfig = samplerConfig,
-                automaticToolCalling = false,
-                channels = emptyList(),
-                extraContext = emptyMap(),
-                loraConfig = null
-            )
-            conversation = newEngine.createConversation(convConfig)
-
-            Timber.i("On-device model loaded successfully")
-            true
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to load on-device model: %s", e.message)
-            lastLoadError = e.message ?: e.javaClass.simpleName
-            close()
-            false
-        }
-    }
 
     /**
      * Sends a user message and streams the response token-by-token.
      *
-     * v0.5.6: completely simplified. Removed the racy select{} block
-     * that caused "Channel was closed" errors. Now uses a simple
-     * for-loop over the channel — suspends when empty, terminates
-     * when closed. No select, no race, no crash.
+     * v0.5.10: added yield() calls to prevent ANR. The native inference
+     * blocks the IO thread; yield() lets other coroutines (including UI
+     * updates) run between tokens.
      */
     fun sendMessage(userMessage: String): Flow<String> = flow {
         val conv = conversation
         if (conv == null) {
             throw LocalAiException("No model loaded. Download a model first via Settings → Models.")
         }
+
+        // v0.5.10: yield to let the UI update before starting heavy inference
+        kotlinx.coroutines.yield()
 
         val tokenChannel = Channel<String>(Channel.BUFFERED)
         var inferenceError: Throwable? = null
@@ -128,11 +136,6 @@ class LocalAiEngine(private val context: Context) {
                 if (fullText.length > previousText.length) {
                     val delta = fullText.substring(previousText.length)
                     previousText = fullText
-                    // v0.5.9: pass everything through without stripping.
-                    // The <think> tag stripping in v0.5.8 removed ALL output
-                    // because the 0.6B model puts everything inside <think>
-                    // and produces nothing after </think>. Better to show
-                    // the raw output than an empty box.
                     tokenChannel.trySend(delta)
                 }
             }
@@ -148,14 +151,12 @@ class LocalAiEngine(private val context: Context) {
             }
         }, emptyMap())
 
-        // v0.5.6: simple for-loop over the channel. Suspends when empty,
-        // terminates when closed. No select{} race condition.
-        // Emits each token delta as it arrives.
         for (token in tokenChannel) {
             emit(token)
+            // v0.5.10: yield after each token to keep the UI responsive
+            kotlinx.coroutines.yield()
         }
 
-        // After the channel is closed (onDone or onError), check for errors.
         inferenceError?.let {
             throw LocalAiException(
                 "Inference failed: ${it.message ?: it.javaClass.simpleName}",
