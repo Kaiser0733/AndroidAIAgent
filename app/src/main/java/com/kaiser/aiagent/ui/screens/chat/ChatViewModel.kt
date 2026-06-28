@@ -8,6 +8,8 @@ import com.kaiser.aiagent.data.chat.ConversationRepository
 import com.kaiser.aiagent.data.chat.MessageEntity
 import com.kaiser.aiagent.data.chat.MessageRole
 import com.kaiser.aiagent.domain.agent.AgentRuntime
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -49,6 +51,9 @@ class ChatViewModel(
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /** v0.4.5: tracks the current agent turn so we can cancel it. */
+    private var currentJob: Job? = null
 
     /** Live list of conversations (for the "new / switch" sheet). */
     val conversationsFlow = conversationRepo.conversations
@@ -113,7 +118,7 @@ class ChatViewModel(
             return
         }
 
-        viewModelScope.launch {
+        currentJob = viewModelScope.launch {
             // 1. Append the user message to the UI immediately.
             val userMsg = MessageEntity(
                 id = java.util.UUID.randomUUID().toString(),
@@ -167,6 +172,33 @@ class ChatViewModel(
                         }.let { /* fire and forget */ }
                     }
                 )
+            } catch (e: CancellationException) {
+                // v0.4.5: user tapped Cancel. Don't show an error — just
+                // save whatever partial text we have so far as the assistant
+                // message (if any), and reset the busy state.
+                val partial = _state.value.streamingText
+                if (partial.isNotBlank() && _state.value.conversation != null) {
+                    val convId = _state.value.conversation!!.id
+                    viewModelScope.launch {
+                        conversationRepo.appendMessage(convId, MessageRole.ASSISTANT, partial)
+                        val refreshed = conversationRepo.get(convId)
+                        _state.value = _state.value.copy(
+                            conversation = refreshed,
+                            messages = refreshed?.messages?.map { it.toUi() }
+                                ?: _state.value.messages,
+                            streamingText = "",
+                            busy = false,
+                            toast = "Cancelled"
+                        )
+                    }
+                } else {
+                    _state.value = _state.value.copy(
+                        busy = false,
+                        streamingText = "",
+                        toast = "Cancelled"
+                    )
+                }
+                throw e  // re-throw to properly cancel the coroutine
             } catch (t: Throwable) {
                 Timber.w(t, "sendMessage failed")
                 _state.value = _state.value.copy(
@@ -176,6 +208,16 @@ class ChatViewModel(
                 )
             }
         }
+    }
+
+    /**
+     * v0.4.5: Cancels the current in-flight agent turn. The user can
+     * tap a Stop button to abort a long-running response. Any partial
+     * streaming text already received is saved as the assistant message.
+     */
+    fun cancel() {
+        currentJob?.cancel()
+        currentJob = null
     }
 
     fun consumeToast() {

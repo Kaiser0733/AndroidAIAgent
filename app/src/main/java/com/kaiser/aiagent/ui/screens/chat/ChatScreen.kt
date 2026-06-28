@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -177,7 +178,9 @@ fun ChatScreen(
                         input = ""
                     }
                 },
-                enabled = !state.busy
+                enabled = !state.busy,
+                busy = state.busy,
+                onCancel = { viewModel.cancel() }
             )
         }
     }
@@ -353,7 +356,9 @@ private fun ChatInputBar(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
-    enabled: Boolean
+    enabled: Boolean,
+    busy: Boolean = false,
+    onCancel: () -> Unit = {}
 ) {
     Row(
         modifier = Modifier
@@ -371,11 +376,21 @@ private fun ChatInputBar(
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             enabled = enabled
         )
-        IconButton(
-            onClick = onSend,
-            enabled = enabled && text.isNotBlank()
-        ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+        if (busy) {
+            // v0.4.5: Stop button replaces Send when the agent is working.
+            IconButton(onClick = onCancel) {
+                Icon(
+                    Icons.Filled.Stop,
+                    contentDescription = "Stop"
+                )
+            }
+        } else {
+            IconButton(
+                onClick = onSend,
+                enabled = enabled && text.isNotBlank()
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+            }
         }
     }
 }

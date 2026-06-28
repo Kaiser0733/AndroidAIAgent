@@ -21,7 +21,13 @@ data class AiConfig(
     val model: String,
     val temperature: Double = 0.7,
     val topP: Double? = null,
-    val maxTokens: Int? = null,
+    /**
+     * Max tokens per response. v0.4.5 defaults to 1024 (was null = provider
+     * default). This prevents runaway responses that burn through rate limits
+     * and token budgets. 1024 tokens ≈ 750 words, enough for any normal
+     * assistant reply. Users can override in Settings.
+     */
+    val maxTokens: Int? = 1024,
     /**
      * Provider-specific extra body parameters, sent as a top-level JSON
      * object merged into the request body. Used by some providers for
