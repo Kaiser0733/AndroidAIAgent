@@ -31,7 +31,7 @@ class CreateTextFileTool(storage: StorageRepository) : BaseFileTool(storage) {
             "a text file. Refuses to overwrite existing files."
     override val argumentsSchema =
         """{"path":"<parent path>","name":"<file name>","content":"<text>"}"""
-    override val permissionLevel = ToolPermissionLevel.CONFIRMATION_REQUIRED
+    override val permissionLevel = ToolPermissionLevel.SAFE
 
     override suspend fun execute(arguments: String): ToolResult {
         val args = parseArgs(arguments)

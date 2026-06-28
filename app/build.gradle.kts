@@ -13,8 +13,8 @@ android {
         applicationId = "com.kaiser.aiagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "0.4.1"
+        versionCode = 31
+        versionName = "0.5.13"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -44,6 +44,7 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
+        freeCompilerArgs = listOf("-Xskip-metadata-version-check")
     }
 
     buildFeatures {
@@ -88,6 +89,7 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.okhttp.sse)
     implementation(libs.timber)
+    implementation(libs.litertlm)
 
     // v0.4: unit testing
     testImplementation("junit:junit:4.13.2")

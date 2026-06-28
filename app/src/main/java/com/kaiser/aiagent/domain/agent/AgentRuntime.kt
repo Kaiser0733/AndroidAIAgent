@@ -81,7 +81,21 @@ class AgentRuntime(
         val systemPrompt = AgentContext.buildSystemPrompt(toolRegistry.describeForPrompt())
         val messages = mutableListOf<AiMessage>()
         messages.add(AiMessage(role = "system", content = systemPrompt))
-        messages.addAll(history)
+
+        // v0.5.13: truncate history to prevent context window overflow.
+        // Each tool call adds ~500-1000 tokens (tool result JSON + wrapped
+        // messages). After 4-5 turns, the total exceeds Groq's 8192-token
+        // limit, causing "stuck on thinking" (the API silently fails or
+        // returns an error that gets swallowed).
+        // Keep only the last 6 messages of history (3 user + 3 assistant).
+        val maxHistoryMessages = 6
+        val truncatedHistory = if (history.size > maxHistoryMessages) {
+            Timber.i("Truncating history from %d to %d messages", history.size, maxHistoryMessages)
+            history.takeLast(maxHistoryMessages)
+        } else {
+            history
+        }
+        messages.addAll(truncatedHistory)
         messages.add(AiMessage(role = "user", content = userMessage))
 
         val context = AgentContext(messages = messages, systemPrompt = systemPrompt)
