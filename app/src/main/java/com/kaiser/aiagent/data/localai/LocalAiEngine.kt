@@ -68,7 +68,7 @@ class LocalAiEngine(private val context: Context) {
                 backend = Backend.CPU(),
                 visionBackend = null,
                 audioBackend = null,
-                maxNumTokens = 1024,
+                maxNumTokens = 4096,  // v0.5.7: was 1024, caused "Input token ids too long" because system prompt alone is ~1288 tokens
                 maxNumImages = null,
                 cacheDir = File(context.cacheDir, "litertlm").absolutePath
             )
