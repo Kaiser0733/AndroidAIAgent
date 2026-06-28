@@ -33,6 +33,7 @@ class ListFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
         val result = storage.listFiles(path)
         val hasAccess = storage.hasFullStorageAccess()
         val pathExists = java.io.File(path).exists()
+        val canRead = java.io.File(path).canRead()
         val filesArr = buildJsonArray {
             for (f in result.files) add(f.toJson())
         }
@@ -49,12 +50,16 @@ class ListFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
             put("truncated", result.truncated)
             put("full_storage_access", hasAccess)
             put("path_exists", pathExists)
-            // v0.4.2: include diagnostic warnings so the agent can
-            // tell the user what's wrong.
+            put("can_read", canRead)
+            // v0.5.12: detailed diagnostics
             if (!pathExists) {
-                put("warning", "Path '$path' does not exist. Use list_storage_roots to see valid paths.")
-            } else if (!hasAccess && result.totalInDir == 0) {
-                put("warning", "Path exists but appears empty. The app may not have 'All files access' permission — only app-created files are visible. Tell the user to open Settings → AI Configuration → 'Grant all files access'.")
+                put("warning", "Path '$path' does not exist. Use list_storage_roots to see valid paths. Common paths: /storage/emulated/0/Download, /storage/emulated/0/Documents, /storage/emulated/0/Pictures")
+            } else if (!canRead) {
+                put("warning", "Path exists but app cannot read it. Grant 'All files access' in Settings → AI Configuration → 'Grant all files access'.")
+            } else if (!hasAccess) {
+                put("warning", "App does not have 'All files access' permission. Some files may not be visible.")
+            } else if (result.totalInDir == 0) {
+                put("info", "Directory is empty or files are not visible due to Android scoped storage restrictions.")
             }
         }
         return ToolResult(
@@ -66,7 +71,8 @@ class ListFilesTool(storage: StorageRepository) : BaseFileTool(storage) {
                 "folder_count" to result.folders.size.toString(),
                 "truncated" to result.truncated.toString(),
                 "full_storage_access" to hasAccess.toString(),
-                "path_exists" to pathExists.toString()
+                "path_exists" to pathExists.toString(),
+                "can_read" to canRead.toString()
             )
         )
     }

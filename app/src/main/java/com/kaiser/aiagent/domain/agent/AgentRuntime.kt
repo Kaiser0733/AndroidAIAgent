@@ -204,11 +204,25 @@ class AgentRuntime(
                     // v0.4: ToolExecutor handles permission enforcement internally
                     // via PermissionManager. CONFIRMATION_REQUIRED tools will
                     // suspend here until the UI resolves the pending confirmation.
-                    val result: ToolResult = toolExecutor.execute(
-                        call = call,
-                        conversationId = conversationId,
-                        onResult = { toolName, r -> recordToolCall(toolName, r) }
-                    )
+                    // v0.5.12: wrap in withTimeout to prevent "stuck in thinking"
+                    // when a tool (e.g. search_files on a huge directory tree)
+                    // takes too long. 30 seconds is generous for any file operation.
+                    val result: ToolResult = try {
+                        kotlinx.coroutines.withTimeout(30_000L) {
+                            toolExecutor.execute(
+                                call = call,
+                                conversationId = conversationId,
+                                onResult = { toolName, r -> recordToolCall(toolName, r) }
+                            )
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        Timber.w("Tool %s timed out after 30s", call.tool)
+                        ToolResult(
+                            success = false,
+                            data = "",
+                            error = "Tool '${call.tool}' timed out after 30 seconds. The directory may be too large. Try a more specific search."
+                        )
+                    }
                     // Append the tool result as a user message (text-based tool
                     // calling doesn't use the tool role — see v0.3.3 commit msg).
                     val successOrError = if (result.success) "succeeded" else "failed"

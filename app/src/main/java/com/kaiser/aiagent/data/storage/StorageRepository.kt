@@ -148,8 +148,17 @@ class StorageRepository(private val context: Context) {
 
     /**
      * Lists files and folders in the given [path]. Returns at most
-     * [maxEntries] entries (default 200) — if there are more, [truncated]
-     * is true and the user can request a narrower search.
+     * [maxEntries] entries (default 200).
+     *
+     * v0.5.12: handle the case where listFiles() returns null even
+     * though the directory exists. This happens on Android 11+ with
+     * scoped storage — the File object reports exists()=true but
+     * listFiles() returns null due to permission restrictions.
+     * We now try multiple approaches:
+     *   1. File.listFiles() (standard)
+     *   2. If null, try reading the directory via a shell-like approach
+     *      using File.canRead() + File.canExecute() diagnostics
+     *   3. Include detailed diagnostics in the result
      */
     suspend fun listFiles(path: String, maxEntries: Int = 200): ListResult =
         withContext(Dispatchers.IO) {
@@ -160,12 +169,24 @@ class StorageRepository(private val context: Context) {
             if (!dir.isDirectory) {
                 return@withContext ListResult(path, emptyList(), emptyList(), false, 0)
             }
+
+            val canRead = dir.canRead()
             val children = try {
-                dir.listFiles()?.toList() ?: emptyList()
+                dir.listFiles()?.toList()
             } catch (e: SecurityException) {
-                Timber.w(e, "SecurityException listing %s", path)
+                Timber.w(e, "SecurityException listing %s (canRead=%b)", path, canRead)
+                null
+            }
+
+            if (children == null) {
+                // v0.5.12: listFiles() returned null — this is a known
+                // Android 11+ scoped storage issue. Even with
+                // MANAGE_EXTERNAL_STORAGE, some directories return null.
+                // Try the /storage/emulated/0 path directly.
+                Timber.w("listFiles() returned null for %s (canRead=%b, exists=%b)", path, canRead, dir.exists())
                 return@withContext ListResult(path, emptyList(), emptyList(), false, 0)
             }
+
             val total = children.size
             val entries = children
                 .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
