@@ -95,8 +95,11 @@ class AiRepository(
             // Load the model if not already loaded.
             if (!localEngine.isModelLoaded() || localEngine.getLoadedModelPath() != modelPath) {
                 onStatus?.invoke("Loading on-device model… (this takes 10-30 seconds on first use)")
-                val systemPrompt = messages.firstOrNull { it.role == "system" }?.content ?: ""
-                val loaded = localEngine.loadModel(modelPath, systemPrompt, cfg.temperature)
+                // v0.5.8: use a SIMPLE system prompt for local models.
+                // The full tool catalog (~1288 tokens) overwhelms small
+                // models like Qwen3-0.6B, producing gibberish output.
+                val systemPrompt = "You are a helpful AI assistant on an Android phone. Answer questions simply and clearly."
+                val loaded = localEngine.loadModel(modelPath, systemPrompt, 0.3)
                 if (!loaded) {
                     val detail = localEngine.lastLoadError ?: "unknown error"
                     throw LocalAiException(
