@@ -1,8 +1,22 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// v0.4.3: Load persistent signing config from keystore.properties.
+// This file is git-ignored and points to a keystore stored OUTSIDE the
+// project tree (at /home/z/my-project/keystores/debug.keystore) so it
+// survives sandbox rebuilds. If the file doesn't exist (e.g. fresh
+// clone), Gradle falls back to the default debug signing config.
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(FileInputStream(keystorePropertiesFile))
 }
 
 android {
@@ -13,12 +27,26 @@ android {
         applicationId = "com.kaiser.aiagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 13
-        versionName = "0.4.2"
+        versionCode = 14
+        versionName = "0.4.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
+        }
+    }
+
+    signingConfigs {
+        // v0.4.3: persistent debug signing config so APK updates don't
+        // conflict with "App not installed" errors after sandbox rebuilds.
+        create("persistentDebug") {
+            val keystorePath = keystoreProperties.getProperty("debugKeystorePath")
+            if (keystorePath != null && file(keystorePath).exists()) {
+                storeFile = file(keystorePath)
+                storePassword = keystoreProperties.getProperty("debugKeystorePassword")
+                keyAlias = keystoreProperties.getProperty("debugKeyAlias")
+                keyPassword = keystoreProperties.getProperty("debugKeyPassword")
+            }
         }
     }
 
@@ -34,6 +62,12 @@ android {
             isMinifyEnabled = false
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            // Use the persistent keystore if available; otherwise fall
+            // back to AGP's default debug signing.
+            val keystorePath = keystoreProperties.getProperty("debugKeystorePath")
+            if (keystorePath != null && file(keystorePath).exists()) {
+                signingConfig = signingConfigs.getByName("persistentDebug")
+            }
         }
     }
 
