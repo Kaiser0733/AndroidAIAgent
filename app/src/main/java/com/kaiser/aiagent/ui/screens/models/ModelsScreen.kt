@@ -189,7 +189,7 @@ private fun ModelCard(
     onSelect: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val isRecommended = model.info.id == "gemma-3n-e2b-it"
+    val isRecommended = model.info.id == "gemma-4-e2b-it"
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = if (model.isActive)

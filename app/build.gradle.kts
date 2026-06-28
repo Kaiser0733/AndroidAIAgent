@@ -27,8 +27,8 @@ android {
         applicationId = "com.kaiser.aiagent"
         minSdk = 26  // Kept at 26 for backward compat; litertlm requires 32+ but we guard at runtime
         targetSdk = 34
-        versionCode = 18
-        versionName = "0.5"
+        versionCode = 19
+        versionName = "0.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
