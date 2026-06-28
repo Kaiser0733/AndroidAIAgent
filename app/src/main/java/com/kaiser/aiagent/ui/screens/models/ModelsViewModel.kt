@@ -43,7 +43,9 @@ class ModelsViewModel(
         val isDownloaded: Boolean,
         val isActive: Boolean,
         val isDownloading: Boolean,
-        val downloadPercent: Int
+        val downloadPercent: Int,
+        val hasPartialDownload: Boolean = false,
+        val partialDownloadBytes: Long = 0L
     )
 
     private val _state = MutableStateFlow(UiState())
@@ -118,13 +120,16 @@ class ModelsViewModel(
     private fun updateModelStates() {
         _state.value = _state.value.copy(
             models = ModelCatalog.all.map { info ->
+                val partialBytes = modelManager.getPartialDownloadBytes(info.id)
                 ModelUiState(
                     info = info,
                     isDownloaded = modelManager.isDownloaded(info.id),
                     isActive = modelManager.activeModelId.value == info.id,
                     isDownloading = _state.value.downloadInProgress == info.id,
                     downloadPercent = if (_state.value.downloadInProgress == info.id)
-                        _state.value.downloadPercent else 0
+                        _state.value.downloadPercent else 0,
+                    hasPartialDownload = partialBytes > 0 && !modelManager.isDownloaded(info.id),
+                    partialDownloadBytes = partialBytes
                 )
             }
         )

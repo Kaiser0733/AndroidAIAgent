@@ -281,12 +281,18 @@ private fun ModelCard(
                     else -> {
                         Button(
                             onClick = onDownload,
-                            enabled = model.info.minRamMb <= 2048 || true, // allow all, warn in text
                             modifier = Modifier.weight(1f)
                         ) {
                             Icon(Icons.Filled.Download, contentDescription = null)
                             Spacer(Modifier.height(0.dp))
-                            Text("  Download (${model.info.sizeHuman})")
+                            if (model.hasPartialDownload) {
+                                val partialPercent = if (model.info.sizeBytes > 0)
+                                    ((model.partialDownloadBytes * 100) / model.info.sizeBytes).toInt()
+                                else 0
+                                Text("  Resume Download ($partialPercent% saved)")
+                            } else {
+                                Text("  Download (${model.info.sizeHuman})")
+                            }
                         }
                     }
                 }

@@ -64,6 +64,18 @@ class ModelManager(private val context: Context) {
      * Downloads a model from HuggingFace. Reports progress via
      * [downloadProgress]. Returns the local file path on success.
      *
+     * v0.5.2: **Resumable downloads.** If a previous download was
+     * interrupted (network drop, app killed, etc.), the partial .tmp
+     * file is preserved. On the next download attempt, the method:
+     *   1. Checks if the .tmp file exists and has content
+     *   2. Sends an HTTP `Range: bytes=<offset>-` header to resume
+     *   3. If the server responds 206 Partial Content, appends to the
+     *      existing .tmp file
+     *   4. If the server responds 200 OK (no range support), starts fresh
+     *
+     * This means a 2 GB download that fails at 39% will resume from 39%
+     * on the next attempt — no wasted data.
+     *
      * The download runs on Dispatchers.IO and streams the response body
      * to disk to avoid loading the entire file into memory.
      */
@@ -71,11 +83,22 @@ class ModelManager(private val context: Context) {
         val targetFile = File(modelsDir, "${model.id}.task")
         val tempFile = File(modelsDir, "${model.id}.task.tmp")
 
+        // Check for an existing partial download to resume from.
+        val existingBytes = if (tempFile.exists()) tempFile.length() else 0L
+        val isResuming = existingBytes > 0
+
+        Timber.i(
+            "Starting download of %s (%s resuming from %d bytes)",
+            model.id,
+            if (isResuming) "RESUMING" else "FRESH",
+            existingBytes
+        )
+
         _downloadProgress.value = DownloadState.Downloading(
             modelId = model.id,
-            bytesRead = 0,
+            bytesRead = existingBytes,
             totalBytes = model.sizeBytes,
-            percent = 0
+            percent = if (isResuming) ((existingBytes * 100) / model.sizeBytes).toInt() else 0
         )
 
         try {
@@ -84,10 +107,18 @@ class ModelManager(private val context: Context) {
                 readTimeout = 0  // no read timeout for large downloads
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "AndroidAIAgent-ModelManager")
+                // v0.5.2: request resume from existing partial download
+                if (isResuming) {
+                    setRequestProperty("Range", "bytes=$existingBytes-")
+                }
             }
 
             val responseCode = connection.responseCode
-            if (responseCode !in 200..299) {
+
+            // 206 = Partial Content (resume succeeded)
+            // 200 = OK (server ignored Range header — start fresh)
+            // Anything else = error
+            if (responseCode != 206 && responseCode !in 200..299) {
                 _downloadProgress.value = DownloadState.Failed(
                     "HTTP $responseCode downloading model. Check your internet connection."
                 )
@@ -95,16 +126,40 @@ class ModelManager(private val context: Context) {
                 return@withContext null
             }
 
-            val totalBytes = connection.contentLengthLong.takeIf { it > 0 } ?: model.sizeBytes
-            var bytesRead = 0L
+            // Determine whether we're actually resuming.
+            val actuallyResuming = responseCode == 206 && isResuming
+
+            // If the server sent 200 instead of 206, it ignored our Range
+            // header — we need to start fresh (truncate the temp file).
+            if (isResuming && !actuallyResuming) {
+                Timber.i("Server doesn't support resume (got 200, expected 206). Starting fresh.")
+                tempFile.delete()
+            }
+
+            // Get the total file size. When resuming (206), Content-Length
+            // is the REMAINING bytes, not the total. We need to add the
+            // already-downloaded bytes to get the total.
+            val contentLength = connection.contentLengthLong
+            val totalBytes: Long = if (actuallyResuming && contentLength > 0) {
+                existingBytes + contentLength
+            } else if (contentLength > 0) {
+                contentLength
+            } else {
+                model.sizeBytes
+            }
+
+            // Track bytes read. If resuming, start from the existing offset.
+            var bytesRead = if (actuallyResuming) existingBytes else 0L
             val buffer = ByteArray(64 * 1024)
 
+            // Open the output file. append=true when resuming, false when fresh.
+            val output = FileOutputStream(tempFile, actuallyResuming)
             connection.inputStream.use { input ->
-                FileOutputStream(tempFile).use { output ->
+                output.use { out ->
                     while (true) {
                         val read = input.read(buffer)
                         if (read < 0) break
-                        output.write(buffer, 0, read)
+                        out.write(buffer, 0, read)
                         bytesRead += read
                         val percent = if (totalBytes > 0) {
                             ((bytesRead * 100) / totalBytes).toInt().coerceAtMost(100)
@@ -120,6 +175,15 @@ class ModelManager(private val context: Context) {
             }
 
             connection.disconnect()
+
+            // Verify the downloaded file size matches the expected total.
+            if (tempFile.length() < totalBytes) {
+                _downloadProgress.value = DownloadState.Failed(
+                    "Download incomplete: got ${tempFile.length()} of $totalBytes bytes. " +
+                        "The partial file has been saved — tap Download again to resume."
+                )
+                return@withContext null
+            }
 
             // Rename temp to final (atomic on most filesystems)
             if (tempFile.exists()) {
@@ -137,12 +201,32 @@ class ModelManager(private val context: Context) {
                 null
             }
         } catch (e: Exception) {
-            Timber.e(e, "Failed to download model %s", model.id)
-            tempFile.delete()
-            _downloadProgress.value = DownloadState.Failed(e.message ?: e.javaClass.simpleName)
+            Timber.e(e, "Failed to download model %s (partial file preserved at %d bytes)", model.id, tempFile.length())
+            // v0.5.2: DON'T delete the temp file on failure — preserve it
+            // so the next download attempt can resume from where we left off.
+            _downloadProgress.value = DownloadState.Failed(
+                "Download failed at ${tempFile.length()}/${model.sizeBytes} bytes " +
+                    "(${if (model.sizeBytes > 0) ((tempFile.length() * 100) / model.sizeBytes).toInt() else 0}%). " +
+                    "Tap Download again to resume from ${tempFile.length()} bytes — no data wasted."
+            )
             null
         }
     }
+
+    /**
+     * Returns the size of the partial download (if any) for a model.
+     * Returns 0 if no partial download exists.
+     */
+    fun getPartialDownloadBytes(modelId: String): Long {
+        val tempFile = File(modelsDir, "$modelId.task.tmp")
+        return if (tempFile.exists()) tempFile.length() else 0L
+    }
+
+    /**
+     * Returns true if a partial download exists for the given model
+     * (i.e. a previous download was interrupted and can be resumed).
+     */
+    fun hasPartialDownload(modelId: String): Boolean = getPartialDownloadBytes(modelId) > 0
 
     /** Deletes a downloaded model file. Returns true if deleted. */
     fun deleteModel(modelId: String): Boolean {
