@@ -95,13 +95,15 @@ class LocalAiEngine(private val context: Context) {
             // v0.5.3: use CPU backend by default. GPU backend fails on
             // many mid-range devices with obscure native errors. CPU is
             // slower but much more reliable. Users can override later.
+            // v0.5.4: maxNumImages must be null (not 0) to use the model's
+            // default — the SDK rejects 0 with "must be positive or null".
             val engineConfig = EngineConfig(
                 modelPath = modelPath,
                 backend = Backend.CPU(),
                 visionBackend = null,
                 audioBackend = null,
                 maxNumTokens = 1024,
-                maxNumImages = 0,
+                maxNumImages = null,
                 cacheDir = File(context.cacheDir, "litertlm").absolutePath
             )
 
