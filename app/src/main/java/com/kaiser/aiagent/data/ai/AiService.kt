@@ -185,48 +185,30 @@ class AiService {
         })
 
         try {
-            // v0.4.6: fixed the channel-drain race condition.
-            // The previous select{} could fire done.onAwait while events
-            // were still buffered in eventChannel, dropping the tail of
-            // the response (causing '{"tool.' truncation). Now we drain
-            // the channel completely before honoring done.
+            // v0.5.11: simplified to use a for-loop over the channel
+            // (same fix as the local engine). Removed the racy select{}
+            // that caused "Channel was closed" on the second message.
+            // The for-loop suspends when empty, terminates when closed.
+            // No select, no race.
             //
-            // Also added an idle timeout: if no event arrives within
-            // IDLE_TIMEOUT_MS, we fail with a clear error instead of
-            // hanging forever ("stuck in thinking").
-            while (true) {
-                // First, drain any buffered events without blocking.
-                while (!eventChannel.isEmpty) {
-                    val evt = eventChannel.receive()
-                    collector.emit(evt)
-                }
-                // If the stream is done, break out (after draining above).
-                if (done.isCompleted) {
-                    when (val outcome = done.await()) {
-                        is StreamOutcome.Success -> break
-                        is StreamOutcome.Retryable ->
-                            throw RetryableStreamException(outcome.message, outcome.retryAfterMs)
-                        is StreamOutcome.Fatal -> throw outcome.error
-                    }
-                }
-                // Wait for either the next event or the stream to complete.
-                // v0.4.6: wrap in withTimeout to prevent "stuck in thinking"
-                // if the provider hangs without sending data or closing.
-                try {
-                    kotlinx.coroutines.withTimeout(IDLE_TIMEOUT_MS) {
-                        kotlinx.coroutines.selects.select<Unit> {
-                            eventChannel.onReceive { collector.emit(it) }
-                            done.onAwait { /* handled in next loop iteration */ }
-                        }
-                    }
-                } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                    throw AiException(
-                        "Streaming timed out — no data received for " +
-                            "${IDLE_TIMEOUT_MS / 1000} seconds. The provider " +
-                            "may be overloaded. Tap Stop and try again."
-                    )
-                }
+            // After the loop, we check done for the outcome.
+            for (token in eventChannel) {
+                collector.emit(token)
             }
+
+            // Channel is closed — check the outcome.
+            when (val outcome = done.await()) {
+                is StreamOutcome.Success -> { /* done */ }
+                is StreamOutcome.Retryable ->
+                    throw RetryableStreamException(outcome.message, outcome.retryAfterMs)
+                is StreamOutcome.Fatal -> throw outcome.error
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            throw AiException(
+                "Streaming timed out — no data received for " +
+                    "${IDLE_TIMEOUT_MS / 1000} seconds. The provider " +
+                    "may be overloaded. Tap Stop and try again."
+            )
         } finally {
             source.cancel()
             eventChannel.close()

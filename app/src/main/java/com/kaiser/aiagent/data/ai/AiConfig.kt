@@ -25,7 +25,7 @@ data class AiConfig(
     val topP: Double? = null,
     val maxTokens: Int? = 1024,
     val extraBody: String = "",
-    /** v0.5: which backend to use. Defaults to CLOUD for backward compat. */
+    /** v0.5: which backend to use. Defaults to CLOUD. */
     val backend: AiBackend = AiBackend.CLOUD,
     /** v0.5: path to the local .task model file (when backend = LOCAL). */
     val localModelPath: String? = null,
