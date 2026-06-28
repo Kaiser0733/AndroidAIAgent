@@ -11,14 +11,11 @@ import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.SamplerConfig
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.selects.select
-import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import java.io.File
 
@@ -108,9 +105,10 @@ class LocalAiEngine(private val context: Context) {
     /**
      * Sends a user message and streams the response token-by-token.
      *
-     * v0.5.5: uses MessageCallback.onMessage() for real streaming.
-     * Each onMessage() call delivers a partial Message containing the
-     * text generated so far. We extract the delta and emit it.
+     * v0.5.6: completely simplified. Removed the racy select{} block
+     * that caused "Channel was closed" errors. Now uses a simple
+     * for-loop over the channel — suspends when empty, terminates
+     * when closed. No select, no race, no crash.
      */
     fun sendMessage(userMessage: String): Flow<String> = flow {
         val conv = conversation
@@ -118,22 +116,16 @@ class LocalAiEngine(private val context: Context) {
             throw LocalAiException("No model loaded. Download a model first via Settings → Models.")
         }
 
-        // Channel to bridge callback-based API to Flow.
         val tokenChannel = Channel<String>(Channel.BUFFERED)
-        val done = CompletableDeferred<Throwable?>()
+        var inferenceError: Throwable? = null
+        var previousText = ""
 
         val userMsg = Message.user(userMessage)
-
-        // Track previous text to compute deltas.
-        // onMessage() delivers the FULL accumulated text each time,
-        // so we emit only the new portion.
-        var previousText = ""
 
         conv.sendMessageAsync(userMsg, object : MessageCallback {
             override fun onMessage(message: Message) {
                 val fullText = extractText(message)
                 if (fullText.length > previousText.length) {
-                    // Emit only the new delta
                     val delta = fullText.substring(previousText.length)
                     previousText = fullText
                     tokenChannel.trySend(delta)
@@ -142,35 +134,28 @@ class LocalAiEngine(private val context: Context) {
 
             override fun onDone() {
                 tokenChannel.close()
-                done.complete(null)
             }
 
             override fun onError(t: Throwable) {
                 Timber.e(t, "Local AI inference error: %s", t.message)
+                inferenceError = t
                 tokenChannel.close()
-                done.complete(t)
             }
         }, emptyMap())
 
-        // Emit tokens as they arrive, with a generous timeout for
-        // CPU inference (120s — mid-range devices are slow).
-        try {
-            while (true) {
-                select<Unit> {
-                    tokenChannel.onReceive { emit(it) }
-                    done.onAwait { error ->
-                        if (error != null) {
-                            throw LocalAiException(
-                                "Inference failed: ${error.message ?: error.javaClass.simpleName}",
-                                error
-                            )
-                        }
-                    }
-                }
-                if (done.isCompleted) break
-            }
-        } finally {
-            tokenChannel.close()
+        // v0.5.6: simple for-loop over the channel. Suspends when empty,
+        // terminates when closed. No select{} race condition.
+        // Emits each token delta as it arrives.
+        for (token in tokenChannel) {
+            emit(token)
+        }
+
+        // After the channel is closed (onDone or onError), check for errors.
+        inferenceError?.let {
+            throw LocalAiException(
+                "Inference failed: ${it.message ?: it.javaClass.simpleName}",
+                it
+            )
         }
     }.flowOn(Dispatchers.IO)
 
