@@ -55,10 +55,39 @@ class AiService {
     suspend fun chat(config: AiConfig, request: AiRequest): AiResponse =
         withContext(Dispatchers.IO) {
             val req = buildRequest(config, request.copy(stream = false))
-            executeWithRetry(config, req) { resp ->
-                val body = resp.body?.string()
-                    ?: throw AiException("Empty response body")
-                json.decodeFromString(AiResponse.serializer(), body)
+            val client = OkHttpClient.Builder()
+                .connectTimeout(config.connectTimeoutSec, TimeUnit.SECONDS)
+                .readTimeout(config.readTimeoutSec, TimeUnit.SECONDS)
+                .build()
+            val response = client.newCall(req).execute()
+            response.use {
+                if (!response.isSuccessful) {
+                    val code = response.code
+                    val body = response.body?.string().orEmpty()
+                    // v0.5.17: Gemini returns errors as a JSON array:
+                    // [{"error":{"code":400,"message":"...","status":"INVALID_ARGUMENT"}}]
+                    // Try to extract the error message from either format.
+                    val errorMsg = try {
+                        val parsed = json.parseToJsonElement(body)
+                        if (parsed is kotlinx.serialization.json.JsonArray) {
+                            val obj = parsed.firstOrNull() as? kotlinx.serialization.json.JsonObject
+                            val error = obj?.get("error") as? kotlinx.serialization.json.JsonObject
+                            (error?.get("message") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                        } else if (parsed is kotlinx.serialization.json.JsonObject) {
+                            val error = parsed["error"] as? kotlinx.serialization.json.JsonObject
+                            (error?.get("message") as? kotlinx.serialization.json.JsonPrimitive)?.content
+                        } else null
+                    } catch (e: Exception) { null } ?: body.take(200)
+                    throw AiException("HTTP $code: $errorMsg")
+                }
+                val body = response.body?.string() ?: throw AiException("Empty response body")
+                try {
+                    json.decodeFromString(AiResponse.serializer(), body)
+                } catch (e: Exception) {
+                    // v0.5.17: if the response can't be parsed as AiResponse,
+                    // it might be an error in a non-standard format
+                    throw AiException("Failed to parse response: ${body.take(200)}")
+                }
             }
         }
 
