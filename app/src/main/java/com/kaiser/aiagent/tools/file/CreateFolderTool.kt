@@ -7,27 +7,19 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * CONFIRMATION_REQUIRED — creates a new folder at [parentPath]/[name].
+ * SAFE — creates a new folder at [parentPath]/[name].
  *
- * The PermissionManager suspends execution and asks the user via a
- * confirmation dialog before this tool's [execute] method runs.
- *
- * Arguments:
- *   {"path": "/storage/emulated/0/Documents", "name": "Physics"}
- *
- * Refuses to create folders whose name contains ".." or path traversal
- * characters. Refuses to overwrite existing files (only folders can
- * already exist — returns the existing folder path in that case).
+ * v0.5.15: changed from CONFIRMATION_REQUIRED to SAFE. Also adds
+ * path resolution for short names like "Documents".
  */
 class CreateFolderTool(storage: StorageRepository) : BaseFileTool(storage) {
     override val name = "create_folder"
     override val description =
-        "Creates a new folder at the given parent path. REQUIRES USER " +
-            "CONFIRMATION — the user will see a dialog before this runs. " +
+        "Creates a new folder at the given parent path. " +
             "Use this when the user asks to 'create', 'make', or 'add' a " +
             "folder. Refuses to overwrite existing files."
     override val argumentsSchema = """{"path":"<parent path>","name":"<folder name>"}"""
-    override val permissionLevel = ToolPermissionLevel.CONFIRMATION_REQUIRED
+    override val permissionLevel = ToolPermissionLevel.SAFE
 
     override suspend fun execute(arguments: String): ToolResult {
         val args = parseArgs(arguments)
@@ -35,50 +27,56 @@ class CreateFolderTool(storage: StorageRepository) : BaseFileTool(storage) {
         val name = args.optString("name")
         if (name.isNullOrBlank()) return errorResult("Missing 'name' argument.")
 
-        // v0.4.1: if the user didn't specify a path, OR the path is in
-        // shared storage but the app doesn't have MANAGE_EXTERNAL_STORAGE,
-        // fall back to the app's private Documents directory. This makes
-        // "create a folder called Physics" work even without the special
-        // permission.
-        val hasAccess = storage.hasFullStorageAccess()
-        if (parentPath.isNullOrBlank()) {
-            parentPath = storage.privateDocumentsPath()
-        } else if (!hasAccess && storage.isSharedStoragePath(parentPath)) {
-            // User asked for shared storage but we don't have access —
-            // fall back to private storage and note it in the result.
-            val privatePath = storage.privateDocumentsPath()
-            val created = storage.createFolder(privatePath, name)
-            return if (created != null) {
-                ToolResult(
-                    success = true,
-                    data = """{"path":"$created","name":"$name","created":true,"fallback_to_private":true,"note":"Shared storage not writable without 'All files access' permission. Created in app-private Documents instead. Open Settings → AI Configuration → 'Grant all files access' to enable shared storage writes."}""",
-                    metadata = mapOf("path" to created, "name" to name, "fallback" to "true")
-                )
-            } else {
-                errorResult(
-                    "Could not create folder '$name' in either '$parentPath' or the fallback " +
-                        "private directory. The parent may not exist or may not be writable."
-                )
+        // v0.5.15: resolve short path names
+        parentPath = resolvePath(parentPath)
+
+        // Try to create the folder.
+        val created = storage.createFolder(parentPath, name)
+        if (created != null) {
+            val obj = buildJsonObject {
+                put("path", created)
+                put("name", name)
+                put("created", true)
             }
+            return ToolResult(
+                success = true,
+                data = obj.toString(),
+                metadata = mapOf("path" to created, "name" to name)
+            )
         }
 
-        val created = storage.createFolder(parentPath, name)
-            ?: return errorResult(
-                "Could not create folder '$name' in '$parentPath'. " +
-                    "The parent may not exist, may not be writable (the app needs " +
-                    "'All files access' permission to write to shared storage on " +
-                    "Android 10+ — open Settings → AI Configuration → 'Grant all " +
-                    "files access'), or a file with that name may already exist."
+        // If shared storage failed, try the app's private Documents dir.
+        val privatePath = storage.privateDocumentsPath()
+        val fallback = storage.createFolder(privatePath, name)
+        if (fallback != null) {
+            return ToolResult(
+                success = true,
+                data = """{"path":"$fallback","name":"$name","created":true,"note":"Created in app-private storage at $fallback (shared storage was not writable)."}""",
+                metadata = mapOf("path" to fallback, "name" to name, "fallback" to "true")
             )
-        val obj = buildJsonObject {
-            put("path", created)
-            put("name", name)
-            put("created", true)
         }
-        return ToolResult(
-            success = true,
-            data = obj.toString(),
-            metadata = mapOf("path" to created, "name" to name)
+
+        return errorResult(
+            "Could not create folder '$name'. The folder may not exist or may not be writable. " +
+                "Make sure 'All files access' is granted in Settings → Storage Access."
         )
+    }
+
+    private fun resolvePath(path: String?): String {
+        if (path.isNullOrBlank()) return storage.privateDocumentsPath()
+        if (path.startsWith("/")) return path
+        val roots = mapOf(
+            "documents" to "/storage/emulated/0/Documents",
+            "downloads" to "/storage/emulated/0/Download",
+            "download" to "/storage/emulated/0/Download",
+            "pictures" to "/storage/emulated/0/Pictures",
+            "music" to "/storage/emulated/0/Music",
+            "movies" to "/storage/emulated/0/Movies",
+            "dcim" to "/storage/emulated/0/DCIM",
+            "internal" to storage.privateDocumentsPath()
+        )
+        val resolved = roots[path.lowercase()]
+        if (resolved != null) return resolved
+        return "/storage/emulated/0/$path"
     }
 }
