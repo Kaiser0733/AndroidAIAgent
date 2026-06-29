@@ -148,8 +148,14 @@ class AiService {
     private fun buildRequest(config: AiConfig, request: AiRequest): Request {
         val bodyJson = request.toJsonWithExtraBody(config.extraBody)
         val body: RequestBody = bodyJson.toRequestBody("application/json".toMediaType())
+        // v0.5.18: normalize the endpoint URL — strip trailing slashes
+        // and warn if it doesn't end with /chat/completions
+        val endpoint = config.endpoint.trim().removeSuffix("/")
+        if (!endpoint.endsWith("chat/completions")) {
+            Timber.w("Endpoint does not end with /chat/completions: %s", endpoint)
+        }
         return Request.Builder()
-            .url(config.endpoint)
+            .url(endpoint)
             .header("Authorization", "Bearer ${config.apiKey}")
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")

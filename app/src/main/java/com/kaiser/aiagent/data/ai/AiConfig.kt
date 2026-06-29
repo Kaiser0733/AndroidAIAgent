@@ -59,11 +59,9 @@ data class AiConfig(
         // latency that exceeds the previous 60s read timeout. Flash
         // responds in 2-5s reliably. Pro still works if you switch to
         // it manually in Settings — just be patient on the first call.
-        const val DEFAULT_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
-        const val DEFAULT_MODEL = "deepseek-ai/deepseek-v4-flash"
-        // Default extra body — disables DeepSeek's "thinking" trace so the
-        // response comes back as plain text. Users can override in Settings.
-        const val DEFAULT_EXTRA_BODY = """{"chat_template_kwargs":{"thinking":false}}"""
+        const val DEFAULT_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        const val DEFAULT_MODEL = "gemini-2.0-flash"
+        const val DEFAULT_EXTRA_BODY = ""
 
         // ---- Alternative free endpoints the user can paste into Settings ----
         //
