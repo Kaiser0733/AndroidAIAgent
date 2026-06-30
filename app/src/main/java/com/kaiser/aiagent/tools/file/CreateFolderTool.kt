@@ -27,7 +27,7 @@ class CreateFolderTool(storage: StorageRepository) : BaseFileTool(storage) {
             "Use this when the user asks to 'create', 'make', or 'add' a " +
             "folder. Refuses to overwrite existing files."
     override val argumentsSchema = """{"path":"<parent path>","name":"<folder name>"}"""
-    override val permissionLevel = ToolPermissionLevel.CONFIRMATION_REQUIRED
+    override val permissionLevel = ToolPermissionLevel.SAFE
 
     override suspend fun execute(arguments: String): ToolResult {
         val args = parseArgs(arguments)

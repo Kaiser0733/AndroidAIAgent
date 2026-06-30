@@ -130,7 +130,7 @@ class StorageRepository(private val context: Context) {
      * [maxEntries] entries (default 200) — if there are more, [truncated]
      * is true and the user can request a narrower search.
      */
-    suspend fun listFiles(path: String, maxEntries: Int = 200): ListResult =
+    suspend fun listFiles(path: String, maxEntries: Int = 20): ListResult =
         withContext(Dispatchers.IO) {
             val dir = File(path)
             if (!dir.exists()) {
@@ -173,7 +173,7 @@ class StorageRepository(private val context: Context) {
         query: String,
         extensions: List<String> = emptyList(),
         roots: List<String> = emptyList(),
-        maxMatches: Int = 200,
+        maxMatches: Int = 20,
         maxDirs: Int = 5000
     ): SearchResult = withContext(Dispatchers.IO) {
         val normalizedQuery = query.trim().lowercase()

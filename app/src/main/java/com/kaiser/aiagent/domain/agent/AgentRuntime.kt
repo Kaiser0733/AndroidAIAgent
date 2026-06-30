@@ -81,7 +81,9 @@ class AgentRuntime(
         val systemPrompt = AgentContext.buildSystemPrompt(toolRegistry.describeForPrompt())
         val messages = mutableListOf<AiMessage>()
         messages.add(AiMessage(role = "system", content = systemPrompt))
-        messages.addAll(history)
+        // v0.5.19: truncate history to prevent context overflow
+        val truncatedHistory = if (history.size > 4) history.takeLast(4) else history
+        messages.addAll(truncatedHistory)
         messages.add(AiMessage(role = "user", content = userMessage))
 
         val context = AgentContext(messages = messages, systemPrompt = systemPrompt)
@@ -199,23 +201,26 @@ class AgentRuntime(
                             content = "[Tool call executed: ${call.tool}]"
                         )
                     )
-                    // v0.4: ToolExecutor handles permission enforcement internally
-                    // via PermissionManager. CONFIRMATION_REQUIRED tools will
-                    // suspend here until the UI resolves the pending confirmation.
-                    val result: ToolResult = toolExecutor.execute(
-                        call = call,
-                        conversationId = conversationId,
-                        onResult = { toolName, r -> recordToolCall(toolName, r) }
-                    )
-                    // Append the tool result as a user message (text-based tool
-                    // calling doesn't use the tool role — see v0.3.3 commit msg).
+                    // v0.5.19: tool timeout + result truncation
+                    val result: ToolResult = try {
+                        kotlinx.coroutines.withTimeout(30_000L) {
+                            toolExecutor.execute(
+                                call = call,
+                                conversationId = conversationId,
+                                onResult = { toolName, r -> recordToolCall(toolName, r) }
+                            )
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        ToolResult(false, "", "Tool '${call.tool}' timed out after 30s.")
+                    }
                     val successOrError = if (result.success) "succeeded" else "failed"
+                    val truncatedResult = if (result.data.length > 800) result.data.take(800) + "..." else result.data
                     context.messages.add(
                         AiMessage(
                             role = "user",
                             content = buildString {
                                 appendLine("The ${call.tool} tool $successOrError. Result:")
-                                appendLine(result.render())
+                                appendLine(truncatedResult)
                                 appendLine()
                                 appendLine("Using this result, answer the user's original question in plain English. Do not call any more tools. Do not repeat yourself.")
                             }
