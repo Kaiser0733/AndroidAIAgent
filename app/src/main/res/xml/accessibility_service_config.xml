@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  v0.6.2: Accessibility service configuration.
+  - accessibilityEventTypes: we listen for all events but the service
+    does not actually act on them; the agent polls on demand.
+  - canRetrieveWindowContent: REQUIRED — without this we cannot walk
+    the accessibility tree to find text/buttons to tap.
+  - canPerformGestures: REQUIRED — needed for swipe/scroll gestures.
+  - packageNames: empty = all packages. The agent must be able to
+    drive any app the user asks it to.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/accessibility_service_description"
+    android:accessibilityEventTypes="typeAllMask"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
+    android:notificationTimeout="100" />

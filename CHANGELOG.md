@@ -4,6 +4,99 @@ All notable changes to this project are documented in this file. The
 format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.6.2] - 2026-06-30
+
+### Major theme — Real UI automation + real floating window
+v0.6.2 fixes two problems reported by the user with v0.6.1:
+  1. "Floating window didn't work" — PiP-via-reflection was unreliable.
+  2. "I told AI to open YT and search for BBS but it opened YT and
+     told me to search it myself" — there were no UI-interaction
+     tools, and the system prompt explicitly told the model NOT to
+     interact with other apps.
+
+### Accessibility service (Phase 1)
+- New `accessibility/AgentAccessibilityService.kt` — extends
+  `AccessibilityService`, exposes readScreen / tapText / typeText /
+  scroll / goBack / goHome.
+- New `accessibility/AgentAccessibilityController.kt` — singleton
+  bridge between the tool layer and the live service instance.
+  Includes `isServiceEnabled(context)` and
+  `openAccessibilitySettings(context)`.
+- New `res/xml/accessibility_service_config.xml` — declares
+  `canRetrieveWindowContent=true`, `canPerformGestures=true`.
+- Manifest: declared as a `BIND_ACCESSIBILITY_SERVICE` service.
+- The user must enable this manually in
+  Settings → Accessibility → AI Agent.
+
+### Accessibility tools (Phase 2) — 6 new SAFE tools
+- `read_screen` — walks the accessibility tree, returns up to 200
+  elements as `label|class|bounds[|clickable][|editable]`.
+- `tap_text` — taps the first node whose text or content-description
+  matches (case-insensitive substring). Walks up to a clickable
+  ancestor if the node itself isn't clickable. Falls back to a
+  gesture tap at the node's centre if all else fails.
+- `type_text` — types into the focused EditText; auto-focuses the
+  first EditText on screen if none is focused.
+- `scroll` — swipe gesture in 4 directions (up/down/left/right).
+- `go_back` — `performGlobalAction(GLOBAL_ACTION_BACK)`.
+- `go_home` — `performGlobalAction(GLOBAL_ACTION_HOME)`.
+- Removed the obsolete blocked `AccessibilityTool` stub.
+
+### Floating chat overlay (Phase 3) — replaces PiP
+- New `floating/FloatingChatService.kt` — a foreground service that
+  draws a `TYPE_APPLICATION_OVERLAY` window via WindowManager. The
+  window is draggable, shows live streaming text + tool status from
+  `AgentRuntime.state`, and has a Close button.
+- `OpenAppTool` now calls `FloatingChatService.startIfPermitted()`
+  BEFORE launching the target app, so the chat stays visible on top.
+- Removed the fragile `enterPictureInPictureMode` reflection code.
+- The user must grant "Draw over other apps" permission manually.
+
+### System prompt rewrite (Phase 4)
+- New prompt teaches multi-step UI chaining:
+    open_app → read_screen → tap_text → type_text → tap_text → read_screen
+- Explicit "do NOT stop after open_app and tell the user to search
+  manually" rule — the whole point of v0.6.2 is the agent CAN drive
+  other apps.
+- Removed the v0.6.1 rule 5 that forbade interacting with other apps.
+
+### Agent runtime tuning (Phase 5)
+- Max tool iterations bumped 5 → 8 to support multi-step chains.
+- Tool-result cap bumped 800 → 1500 chars so the model can see more
+  of `read_screen` output (which can list many UI elements).
+
+### Settings UI (Phase 6)
+- New "Accessibility Service" section with status text + button to
+  open the system Accessibility settings page + refresh button.
+- New "Floating Chat Overlay" section with status text + button to
+  open the system "Draw over other apps" settings page + refresh
+  button.
+- Both sections show a clear ✓ / ✗ indicator so the user can tell
+  at a glance whether the agent has the permissions it needs.
+
+### Manifest (Phase 7)
+- Added `SYSTEM_ALERT_WINDOW` permission (for the floating overlay).
+- Added `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_SPECIAL_USE`
+  permissions (for keeping FloatingChatService alive).
+- Declared `AgentAccessibilityService` as a
+  `BIND_ACCESSIBILITY_SERVICE` service with
+  `accessibility_service_config` meta-data.
+- Declared `FloatingChatService` as a `specialUse` foreground service
+  with a `<property>` describing its purpose.
+- Removed `android:supportsPictureInPicture` from MainActivity — no
+  longer needed.
+
+### Build
+- versionCode 40 → 41, versionName "0.6.1" → "0.6.2".
+- Compiles clean (only pre-existing serialization opt-in warnings).
+- APK 18,708,407 bytes, signed with the persistent debug keystore
+  (`app/debug.keystore`, in git).
+
+### Tags
+- Git tag v0.6.2-alpha created on dev branch.
+  GitHub Release v0.6.2-alpha published with the APK as a release
+  asset, marked make_latest=true.
+
 ## [0.4] - 2026-06-27
 
 ### Major theme — File Agent

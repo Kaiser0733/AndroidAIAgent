@@ -3,11 +3,13 @@ package com.kaiser.aiagent.ui.screens.settings
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.kaiser.aiagent.accessibility.AgentAccessibilityController
 import com.kaiser.aiagent.data.ai.AiConfig
 import com.kaiser.aiagent.data.ai.AiRepository
 import com.kaiser.aiagent.data.remote.RemoteConfigRepository
 import com.kaiser.aiagent.data.storage.StoragePermissionHelper
 import com.kaiser.aiagent.data.updater.UpdateRepository
+import com.kaiser.aiagent.floating.FloatingChatService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -16,9 +18,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 /**
- * Backs the Settings screen. v0.4.1 adds a Storage section showing
- * whether 'All files access' is granted and a button to open the
- * system settings page to grant it.
+ * Backs the Settings screen. v0.4.1 added a Storage section. v0.6.2
+ * adds Accessibility and Overlay sections.
  */
 class SettingsViewModel(
     private val context: Context,
@@ -29,6 +30,8 @@ class SettingsViewModel(
     private val remoteConfigRepository = RemoteConfigRepository(context)
     private val storagePermissionHelper = StoragePermissionHelper(context)
     private val _storageAccessGranted = MutableStateFlow(storagePermissionHelper.isFullStorageAccessGranted())
+    private val _accessibilityEnabled = MutableStateFlow(AgentAccessibilityController.isServiceEnabled(context))
+    private val _overlayEnabled = MutableStateFlow(FloatingChatService.canDrawOverlays(context))
 
     data class UiState(
         // Updater / remote config (existing)
@@ -47,6 +50,9 @@ class SettingsViewModel(
         val connectionStatus: String? = null,
         // Storage (v0.4.1)
         val storageAccessGranted: Boolean = false,
+        // v0.6.2: accessibility + overlay
+        val accessibilityEnabled: Boolean = false,
+        val overlayEnabled: Boolean = false,
         // Common
         val dirty: Boolean = false
     )
@@ -115,6 +121,8 @@ class SettingsViewModel(
             testingConnection = testing,
             connectionStatus = connStatus,
             storageAccessGranted = _storageAccessGranted.value,
+            accessibilityEnabled = _accessibilityEnabled.value,
+            overlayEnabled = _overlayEnabled.value,
             dirty = listOf(dUrl, dRepo, dApiKey, dEndpoint, dModel, dTemp, dMax, dTopP, dExtraBody).any { it != null }
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UiState())
@@ -128,6 +136,29 @@ class SettingsViewModel(
      *  from the system settings page). */
     fun refreshStorageAccess() {
         _storageAccessGranted.value = storagePermissionHelper.isFullStorageAccessGranted()
+    }
+
+    // ---- v0.6.2: Accessibility permission -----------------------------
+    /** Opens the system Accessibility settings page so the user can
+     *  enable the AI Agent accessibility service. */
+    fun openAccessibilitySettings() {
+        AgentAccessibilityController.openAccessibilitySettings(context)
+    }
+
+    /** Re-checks whether the accessibility service is enabled. */
+    fun refreshAccessibility() {
+        _accessibilityEnabled.value = AgentAccessibilityController.isServiceEnabled(context)
+    }
+
+    // ---- v0.6.2: Overlay (SYSTEM_ALERT_WINDOW) permission -------------
+    /** Opens the system 'Draw over other apps' settings page. */
+    fun openOverlaySettings() {
+        FloatingChatService.openOverlaySettings(context)
+    }
+
+    /** Re-checks whether the overlay permission is granted. */
+    fun refreshOverlay() {
+        _overlayEnabled.value = FloatingChatService.canDrawOverlays(context)
     }
 
     // ---- Updater / remote config setters (existing) --------------------

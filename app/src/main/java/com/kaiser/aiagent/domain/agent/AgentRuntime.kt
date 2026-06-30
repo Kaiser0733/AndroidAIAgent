@@ -66,7 +66,9 @@ class AgentRuntime(
     ): String {
         val toolDefs = toolRegistry.toJsonDefinitions()
         var iteration = 0
-        val maxIterations = 5
+        // v0.6.2: bumped from 5 → 8 to support multi-step UI automation
+        // (open_app → read_screen → tap_text → type_text → tap_text → read_screen → answer)
+        val maxIterations = 8
 
         while (true) {
             if (iteration >= maxIterations) {
@@ -133,8 +135,11 @@ class AgentRuntime(
                         ToolResult(false, "", "Tool '${tc.function.name}' timed out after 30s.")
                     }
 
-                    val truncatedData = if (result.data.length > 800)
-                        result.data.take(800) + "..." else result.data
+                    // v0.6.2: bumped from 800 → 1500 chars so the model
+                    // can see more of read_screen output (which can list
+                    // many UI elements).
+                    val truncatedData = if (result.data.length > 1500)
+                        result.data.take(1500) + "..." else result.data
 
                     messages.add(AiMessage(
                         role = "tool",

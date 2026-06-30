@@ -1,16 +1,13 @@
 package com.kaiser.aiagent.tools.system
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
-import android.app.PictureInPictureParams
-import android.util.Rational
 import com.kaiser.aiagent.domain.tools.AgentTool
 import com.kaiser.aiagent.domain.tools.ToolPermissionLevel
 import com.kaiser.aiagent.domain.tools.ToolResult
 import com.kaiser.aiagent.domain.tools.stringParam
+import com.kaiser.aiagent.floating.FloatingChatService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -20,16 +17,24 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /**
- * v0.6 Phase 2: Opens an app by name.
- * Uses PackageManager to find the app and launches it.
+ * v0.6.2: Opens an app by name.
  *
- * Examples: "Open YouTube", "Open Settings", "Open Chrome"
+ * Side effect: if the floating overlay permission is granted, this
+ * tool also starts [FloatingChatService] so the chat stays visible
+ * as a floating window on top of the app being opened. The user
+ * can see agent responses without switching back.
+ *
+ * If the overlay permission is NOT granted, the tool still opens the
+ * target app — it just doesn't show a floating window. The user will
+ * see the system prompt ask them to grant the permission via Settings.
  */
 class OpenAppTool(private val context: Context) : AgentTool {
     override val name = "open_app"
     override val description = "Opens an app on the device by name. " +
         "Use when the user asks to 'open', 'launch', or 'start' an app. " +
-        "Examples: YouTube, Settings, Chrome, WhatsApp, Gmail, Camera."
+        "Examples: YouTube, Settings, Chrome, WhatsApp, Gmail, Camera. " +
+        "After opening, call read_screen to see what is on screen, then " +
+        "tap_text / type_text to interact with the app."
     override val argumentsSchema = """{"app_name":"<app name>"}"""
     override val permissionLevel = ToolPermissionLevel.SAFE
 
@@ -52,7 +57,6 @@ class OpenAppTool(private val context: Context) : AgentTool {
         val intent = Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER) }
         val resolvedActivities = pm.queryIntentActivities(intent, 0)
 
-        // Search for matching app by name (case-insensitive)
         val match = resolvedActivities.find { ri ->
             val label = ri.loadLabel(pm).toString().lowercase()
             val pkg = ri.activityInfo.packageName.lowercase()
@@ -60,7 +64,6 @@ class OpenAppTool(private val context: Context) : AgentTool {
         }
 
         if (match == null) {
-            // List available apps as suggestions
             val available = resolvedActivities.take(15).joinToString(", ") { it.loadLabel(pm).toString() }
             return@withContext ToolResult(
                 false, "",
@@ -72,26 +75,25 @@ class OpenAppTool(private val context: Context) : AgentTool {
         if (launchIntent == null) {
             return@withContext ToolResult(false, "", "Could not create launch intent for ${match.activityInfo.packageName}")
         }
-
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-        // v0.6.2: Enter Picture-in-Picture mode BEFORE launching the other app.
-        // This keeps the AI Agent chat visible as a floating window.
-        try {
-            val activity = findMainActivity()
-            if (activity != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
-                val pipParams = android.app.PictureInPictureParams.Builder()
-                    .setAspectRatio(android.util.Rational(9, 16))
-                    .build()
-                activity.enterPictureInPictureMode(pipParams)
-                // Small delay to let PiP animation start
-                Thread.sleep(300)
-            }
-        } catch (e: Exception) {
-            // PiP not supported or failed — continue without it
-        }
+        // v0.6.2: Start the floating chat overlay BEFORE launching the
+        // other app. This keeps the AI Agent visible on top so the user
+        // can continue chatting while the agent drives the target app.
+        FloatingChatService.startIfPermitted(context)
+
+        // Small delay to let the overlay window attach before we
+        // switch to the other app — otherwise the overlay can briefly
+        // flash on top of OUR activity and then get pushed behind.
+        Thread.sleep(200)
 
         context.startActivity(launchIntent)
+
+        // Give the other app a moment to come up before any subsequent
+        // accessibility tool (read_screen / tap_text) tries to inspect
+        // its window. 1s is usually enough for the launcher activity
+        // to reach the foreground and start drawing.
+        Thread.sleep(1000)
 
         val appNameResolved: String = match.loadLabel(pm).toString()
         ToolResult(
@@ -100,23 +102,10 @@ class OpenAppTool(private val context: Context) : AgentTool {
                 put("app_name", appNameResolved)
                 put("package", match.activityInfo.packageName)
                 put("opened", true)
+                put("hint", "Call read_screen next to see what is on screen, then tap_text or type_text to interact.")
             }.toString(),
             error = null,
             metadata = mapOf("app" to appNameResolved)
         )
-    }
-
-    /** Finds the current MainActivity for PiP entry. */
-    private fun findMainActivity(): Activity? {
-        return try {
-            val activityThread = Class.forName("android.app.ActivityThread")
-                .getMethod("currentActivityThread").invoke(null)
-            val activities = activityThread?.javaClass
-                ?.getDeclaredField("mActivityList")?.apply { isAccessible = true }
-                ?.get(activityThread) as? Map<*, *>
-            activities?.values?.firstOrNull { it is Activity } as? Activity
-        } catch (e: Exception) {
-            null
-        }
     }
 }

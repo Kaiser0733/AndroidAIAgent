@@ -9,6 +9,15 @@
     <!-- v0.6: For open_app tool — query and launch other apps -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- v0.6.2: SYSTEM_ALERT_WINDOW — lets the floating chat overlay
+         draw on top of other apps so the user can keep chatting with
+         the agent while the agent drives another app (YouTube, etc.). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- v0.6.2: FOREGROUND_SERVICE — keeps FloatingChatService alive
+         while the app is backgrounded. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"
+        tools:ignore="ForegroundServiceType" />
     <!-- Storage access for file tools (v0.4) -->
     <!-- Android 12 and below -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -44,7 +53,6 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
-            android:supportsPictureInPicture="true"
             android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation"
             android:theme="@style/Theme.AndroidAIAgent">
             <intent-filter>
@@ -52,6 +60,41 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          v0.6.2: Accessibility service that lets the agent read the
+          screen, tap buttons, type into text fields, scroll, and press
+          Back/Home. The user must enable this manually in system
+          Settings → Accessibility → AI Agent. Without it the
+          accessibility tools (read_screen, tap_text, type_text, scroll,
+          go_back, go_home) all return ERROR.
+        -->
+        <service
+            android:name=".accessibility.AgentAccessibilityService"
+            android:exported="false"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!--
+          v0.6.2: Floating chat overlay service. Started by OpenAppTool
+          just before it launches another app, so the AI Agent chat
+          stays visible on top of the target app.
+        -->
+        <service
+            android:name=".floating.FloatingChatService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Floating AI Agent chat overlay visible to the user while the agent drives another app." />
+        </service>
 
         <!--
             Placeholder for the future FileProvider used to share downloaded APK

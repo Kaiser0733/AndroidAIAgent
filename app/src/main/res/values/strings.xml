@@ -62,4 +62,7 @@
     <string name="maintenance_message">The agent is temporarily disabled for maintenance. Please try again later.</string>
     <string name="disabled_title">Agent Disabled</string>
     <string name="disabled_message">The agent has been remotely disabled. Please contact the administrator.</string>
+
+    <!-- v0.6.2: Accessibility service -->
+    <string name="accessibility_service_description">AI Agent accessibility service. Lets the agent read what is on the screen, tap buttons, type into text fields, scroll, and press Back/Home so it can drive other apps on your behalf. The agent only acts when you ask it to.</string>
 </resources>

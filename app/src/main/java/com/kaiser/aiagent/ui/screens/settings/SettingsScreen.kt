@@ -231,6 +231,99 @@ fun SettingsScreen(
                 }
             }
 
+            // ---- v0.6.2: Accessibility Service ----------------------
+            item {
+                SectionLabel("Accessibility Service")
+                Text(
+                    text = if (state.accessibilityEnabled) {
+                        "✓ Accessibility service is ENABLED. The agent can read the screen, " +
+                            "tap buttons, type into text fields, scroll, and press Back/Home " +
+                            "in other apps on your behalf."
+                    } else {
+                        "✗ Accessibility service is NOT enabled. Without this, the agent can " +
+                            "open apps but CANNOT interact with them (tap, type, scroll, etc.). " +
+                            "Tap the button below, find 'AI Agent' in the list, and toggle it ON."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.accessibilityEnabled)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { viewModel.openAccessibilitySettings() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (state.accessibilityEnabled)
+                        "Open Accessibility settings (already enabled)"
+                    else
+                        "Open Accessibility settings")
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "In the system Accessibility page, find 'AI Agent' (or " +
+                        "'installed apps' → 'AI Agent'), tap it, and toggle ON. The agent " +
+                        "only acts when you ask it to — it never reads the screen or taps " +
+                        "buttons on its own.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(
+                    onClick = { viewModel.refreshAccessibility() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Refresh — re-check accessibility status")
+                }
+            }
+
+            // ---- v0.6.2: Floating Overlay (SYSTEM_ALERT_WINDOW) -----
+            item {
+                SectionLabel("Floating Chat Overlay")
+                Text(
+                    text = if (state.overlayEnabled) {
+                        "✓ Draw-over-other-apps permission GRANTED. When the agent opens " +
+                            "another app, a floating chat window will stay visible on top " +
+                            "so you can keep reading the agent's responses."
+                    } else {
+                        "✗ Draw-over-other-apps permission NOT granted. Without this, the " +
+                            "floating chat window will NOT appear when the agent opens " +
+                            "another app — you'll have to switch back to the AI Agent app " +
+                            "to see what the agent is doing."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (state.overlayEnabled)
+                        MaterialTheme.colorScheme.primary
+                    else
+                        MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { viewModel.openOverlaySettings() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (state.overlayEnabled)
+                        "Open overlay settings (already granted)"
+                    else
+                        "Grant draw-over-other-apps permission")
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Opens the system 'Display over other apps' page for AI Agent. " +
+                        "Toggle 'Allow display over other apps' ON.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+                OutlinedButton(
+                    onClick = { viewModel.refreshOverlay() },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Refresh — re-check overlay permission")
+                }
+            }
+
             // ---- Remote Configuration ------------------------------
             item {
                 SectionLabel(stringResource(R.string.settings_remote_config))

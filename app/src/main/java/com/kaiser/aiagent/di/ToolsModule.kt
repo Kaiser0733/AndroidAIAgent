@@ -4,7 +4,12 @@ import com.kaiser.aiagent.data.storage.StorageRepository
 import com.kaiser.aiagent.domain.tools.AgentTool
 import com.kaiser.aiagent.domain.tools.PermissionManager
 import com.kaiser.aiagent.domain.tools.ToolRegistry
-import com.kaiser.aiagent.tools.blocked.AccessibilityTool
+import com.kaiser.aiagent.tools.accessibility.GoBackTool
+import com.kaiser.aiagent.tools.accessibility.GoHomeTool
+import com.kaiser.aiagent.tools.accessibility.ReadScreenTool
+import com.kaiser.aiagent.tools.accessibility.ScrollTool
+import com.kaiser.aiagent.tools.accessibility.TapTextTool
+import com.kaiser.aiagent.tools.accessibility.TypeTextTool
 import com.kaiser.aiagent.tools.blocked.AppControlTool
 import com.kaiser.aiagent.tools.blocked.DeleteFileTool
 import com.kaiser.aiagent.tools.blocked.MoveFileTool
@@ -26,20 +31,20 @@ import org.koin.core.context.GlobalContext
 import org.koin.dsl.module
 
 /**
- * Koin module that registers all v0.4 tools + StorageRepository +
- * PermissionManager. Tools register themselves with the [ToolRegistry]
- * via [registerAllTools] (called from AndroidAIAgentApp.onCreate).
- *
- * v0.4 registered tools (16 total):
- *   SAFE (9):
+ * v0.6.2 registered tools (21 total):
+ *   SAFE (19):
  *     - get_time, app_info, device_info
  *     - list_storage_roots, list_files, search_files, file_info,
  *       read_text_file, search_memory
+ *     - open_app
+ *     - read_screen, tap_text, type_text, scroll, go_back, go_home (NEW)
  *   CONFIRMATION_REQUIRED (2):
  *     - create_folder, create_text_file
- *   BLOCKED (5):
- *     - delete_file, move_file, rename_file, accessibility_action,
- *       app_control
+ *   BLOCKED (4):
+ *     - delete_file, move_file, rename_file, app_control
+ *
+ * Note: the old blocked AccessibilityTool stub is GONE — replaced by
+ * the 6 real accessibility tools above.
  */
 val toolsModule = module {
     single { StorageRepository(androidContext()) }
@@ -64,19 +69,22 @@ val toolsModule = module {
     single { DeleteFileTool() }
     single { MoveFileTool() }
     single { RenameFileTool() }
-    single { AccessibilityTool() }
     single { AppControlTool() }
     // v0.6: System tools
     single { OpenAppTool(androidContext()) }
+    // v0.6.2: Accessibility tools (require AgentAccessibilityService running)
+    single { ReadScreenTool() }
+    single { TapTextTool() }
+    single { TypeTextTool() }
+    single { ScrollTool() }
+    single { GoBackTool() }
+    single { GoHomeTool() }
 }
 
 /**
  * Invoked from [com.kaiser.aiagent.AndroidAIAgentApp.onCreate] to
  * register all tool singletons (resolved via Koin) into the
  * [ToolRegistry]. This must be called AFTER `startKoin`.
- *
- * Uses [GlobalContext.get()] to access the running Koin instance and
- * resolve tool singletons.
  */
 fun registerAllTools(registry: ToolRegistry) {
     val koin = GlobalContext.get()
@@ -95,9 +103,14 @@ fun registerAllTools(registry: ToolRegistry) {
         koin.get<DeleteFileTool>(),
         koin.get<MoveFileTool>(),
         koin.get<RenameFileTool>(),
-        koin.get<AccessibilityTool>(),
         koin.get<AppControlTool>(),
-        koin.get<OpenAppTool>()
+        koin.get<OpenAppTool>(),
+        koin.get<ReadScreenTool>(),
+        koin.get<TapTextTool>(),
+        koin.get<TypeTextTool>(),
+        koin.get<ScrollTool>(),
+        koin.get<GoBackTool>(),
+        koin.get<GoHomeTool>()
     )
     for (tool in tools) {
         registry.register(tool)
