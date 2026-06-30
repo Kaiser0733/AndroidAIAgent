@@ -1,8 +1,12 @@
 package com.kaiser.aiagent.tools.system
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
+import android.app.PictureInPictureParams
+import android.util.Rational
 import com.kaiser.aiagent.domain.tools.AgentTool
 import com.kaiser.aiagent.domain.tools.ToolPermissionLevel
 import com.kaiser.aiagent.domain.tools.ToolResult
@@ -70,6 +74,23 @@ class OpenAppTool(private val context: Context) : AgentTool {
         }
 
         launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        // v0.6.2: Enter Picture-in-Picture mode BEFORE launching the other app.
+        // This keeps the AI Agent chat visible as a floating window.
+        try {
+            val activity = findMainActivity()
+            if (activity != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val pipParams = android.app.PictureInPictureParams.Builder()
+                    .setAspectRatio(android.util.Rational(9, 16))
+                    .build()
+                activity.enterPictureInPictureMode(pipParams)
+                // Small delay to let PiP animation start
+                Thread.sleep(300)
+            }
+        } catch (e: Exception) {
+            // PiP not supported or failed — continue without it
+        }
+
         context.startActivity(launchIntent)
 
         val appNameResolved: String = match.loadLabel(pm).toString()
@@ -83,5 +104,19 @@ class OpenAppTool(private val context: Context) : AgentTool {
             error = null,
             metadata = mapOf("app" to appNameResolved)
         )
+    }
+
+    /** Finds the current MainActivity for PiP entry. */
+    private fun findMainActivity(): Activity? {
+        return try {
+            val activityThread = Class.forName("android.app.ActivityThread")
+                .getMethod("currentActivityThread").invoke(null)
+            val activities = activityThread?.javaClass
+                ?.getDeclaredField("mActivityList")?.apply { isAccessible = true }
+                ?.get(activityThread) as? Map<*, *>
+            activities?.values?.firstOrNull { it is Activity } as? Activity
+        } catch (e: Exception) {
+            null
+        }
     }
 }

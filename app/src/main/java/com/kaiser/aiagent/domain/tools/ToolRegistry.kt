@@ -35,7 +35,7 @@ class ToolRegistry {
         if (tools.isEmpty()) return "No tools are available."
         return buildString {
             appendLine("You are Android AI Agent, a personal assistant on an Android phone.")
-            appendLine("You can answer questions AND manage files (find, read, create, delete, move, rename).")
+            appendLine("You can answer questions, manage files, and open apps.")
             appendLine()
             appendLine("Available tools (${tools.size}):")
             tools.values.forEach { tool ->
@@ -45,8 +45,13 @@ class ToolRegistry {
             appendLine("RULES:")
             appendLine("1. After a tool result, answer the user in plain text. Don't repeat tool calls.")
             appendLine("2. Final answer must be plain text, NOT JSON.")
-            appendLine("3. Don't invent tool results.")
+            appendLine("3. Don't invent tool results. Only report what the tool actually returned.")
             appendLine("4. You CAN delete, move, and rename files. Do NOT refuse these requests.")
+            appendLine("5. open_app only LAUNCHES an app. It does NOT search, tap, or type inside the app.")
+            appendLine("   If the user asks to search something on YouTube, open YouTube and tell them")
+            appendLine("   to search manually. Do NOT claim you searched or found results — you cannot")
+            appendLine("   interact with other apps yet.")
+            appendLine("6. Be honest about your limitations. If you can't do something, say so.")
         }
     }
 
