@@ -44,6 +44,7 @@ class ChatViewModel(
         val messages: List<UiMessage> = emptyList(),
         val streamingText: String = "",
         val busy: Boolean = false,
+        val statusText: String? = null,
         val toast: String? = null
     )
 
@@ -169,10 +170,20 @@ class ChatViewModel(
                 )
             } catch (t: Throwable) {
                 Timber.w(t, "sendMessage failed")
+                // v0.6.1: show error as PERSISTENT chat message (not vanishing toast)
+                val errorMsg = "❌ ${t.message ?: t.javaClass.simpleName}"
+                val errorUiMsg = UiMessage(
+                    id = java.util.UUID.randomUUID().toString(),
+                    role = MessageRole.ASSISTANT,
+                    content = errorMsg,
+                    timestamp = System.currentTimeMillis()
+                )
                 _state.value = _state.value.copy(
                     busy = false,
                     streamingText = "",
-                    toast = "Error: ${t.message ?: t.javaClass.simpleName}"
+                    statusText = null,
+                    messages = _state.value.messages + errorUiMsg,
+                    toast = null
                 )
             }
         }

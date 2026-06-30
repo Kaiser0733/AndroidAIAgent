@@ -47,7 +47,8 @@ class AiService {
                 if (!response.isSuccessful) {
                     val code = response.code
                     val body = response.body?.string().orEmpty()
-                    val errorMsg = parseErrorMessage(body) ?: body.take(200)
+                    // v0.6.1: show actual error body, not just "no detail"
+                    val errorMsg = parseErrorMessage(body) ?: if (body.isNotBlank()) body.take(300) else "HTTP $code (no response body)"
                     throw AiException("HTTP $code: $errorMsg")
                 }
                 val body = response.body?.string() ?: throw AiException("Empty response body")
@@ -113,8 +114,10 @@ class AiService {
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 val code = response?.code
-                streamError = AiException(friendlyHttpMessage(code, t, response?.header("Retry-After")?.toLongOrNull()), t)
+                val body = try { response?.body?.string() } catch(e:Exception) { null }
                 response?.close()
+                val detail = parseErrorMessage(body.orEmpty()) ?: body?.take(300) ?: t?.message ?: "unknown"
+                streamError = AiException("HTTP $code: $detail", t)
                 channel.close()
             }
 

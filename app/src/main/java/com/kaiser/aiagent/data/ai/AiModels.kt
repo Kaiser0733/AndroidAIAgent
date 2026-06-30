@@ -66,7 +66,7 @@ data class AiRequest(
             ignoreUnknownKeys = true
             isLenient = true
             explicitNulls = false
-            encodeDefaults = false
+            encodeDefaults = true
         }
     }
 }

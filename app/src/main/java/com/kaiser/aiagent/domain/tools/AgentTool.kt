@@ -27,7 +27,6 @@ interface AgentTool {
     fun parametersJsonSchema(): JsonObject = buildJsonObject {
         put("type", "object")
         put("properties", buildJsonObject {})
-        put("required", kotlinx.serialization.json.JsonArray(emptyList()))
     }
 
     suspend fun execute(arguments: String): ToolResult
