@@ -1,55 +1,43 @@
 package com.kaiser.aiagent.domain.tools
 
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+
 /**
- * A single capability the agent can invoke. Implementations live in
- * `com.kaiser.aiagent.tools.*` and are registered with [ToolRegistry]
- * at app startup.
+ * A single capability the agent can invoke via native function calling.
  *
- * v0.4 changes:
- *  - [execute] now returns the new [ToolResult] shape (success/data/error/metadata).
- *  - Added [permissionLevel] — every tool must declare how dangerous it is.
- *    The [PermissionManager] enforces this before [execute] is called.
- *
- * SECURITY: tools execute on the device with the app's permissions.
- * Be conservative — implement only safe, read-only, side-effect-free
- * tools unless you have a strong reason to do otherwise. Tools that
- * modify the file system or any persisted state MUST declare
- * [ToolPermissionLevel.CONFIRMATION_REQUIRED].
- *
- * The [arguments] parameter is a JSON-encoded string. Tools are
- * responsible for parsing it themselves (typically via
- * kotlinx.serialization). This keeps the interface simple and lets
- * each tool define its own argument schema.
+ * v0.6: added [parametersJsonSchema] for native function calling.
+ * The model receives this schema and knows exactly what arguments to pass.
  */
 interface AgentTool {
-    /** Stable identifier used by the model in tool-call requests. */
     val name: String
-
-    /** Human-readable description shown to the model in the system prompt. */
     val description: String
-
-    /**
-     * JSON schema for the arguments object. Shown to the model so it
-     * knows what fields to populate. Use an empty string for tools
-     * that take no arguments.
-     */
     val argumentsSchema: String
         get() = "{}"
 
-    /**
-     * Permission level required to execute this tool. v0.4 default is
-     * [ToolPermissionLevel.SAFE] for backward compatibility with v0.3
-     * tools. New tools that modify state MUST override this to
-     * [ToolPermissionLevel.CONFIRMATION_REQUIRED].
-     */
     val permissionLevel: ToolPermissionLevel
         get() = ToolPermissionLevel.SAFE
 
     /**
-     * Executes the tool and returns a [ToolResult]. The [PermissionManager]
-     * calls this only after checking [permissionLevel]. Tools should
-     * throw on unexpected failures — the [ToolExecutor] catches and
-     * surfaces them as a failed [ToolResult].
+     * v0.6: Returns a proper JSON Schema object for native function calling.
+     * Override this to provide a detailed schema. Default: empty object schema.
      */
+    fun parametersJsonSchema(): JsonObject = buildJsonObject {
+        put("type", "object")
+        put("properties", buildJsonObject {})
+        put("required", kotlinx.serialization.json.JsonArray(emptyList()))
+    }
+
     suspend fun execute(arguments: String): ToolResult
 }
+
+/** Helper to build a string parameter schema. */
+fun stringParam(description: String): JsonObject = buildJsonObject {
+    put("type", "string")
+    put("description", description)
+}
+
+/** Helper to build a required string parameter. */
+fun requiredStringParam(description: String): JsonObject = stringParam(description)

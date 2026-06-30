@@ -1,65 +1,55 @@
 package com.kaiser.aiagent.domain.tools
 
-/**
- * Mutable registry of [AgentTool]s. Tools register themselves at app
- * startup (see [com.kaiser.aiagent.di.ToolsModule]); the agent queries
- * the registry when (a) building the system prompt (so the model knows
- * what tools exist) and (b) executing a tool call.
- *
- * v0.4 additions:
- *  - [describeForPrompt] now includes the permission level per tool
- *    so the model understands which tools need confirmation.
- *  - [stats] returns a count by permission level for the Debug screen.
- *  - Tools with [ToolPermissionLevel.BLOCKED] are still registered (so
- *    the Debug screen can show them) but the ToolExecutor will refuse
- *    to execute them. This lets the user see "yes, the codebase knows
- *    about DeleteFileTool, but it's blocked by policy".
- */
+import com.kaiser.aiagent.data.ai.AiToolDefinition
+import com.kaiser.aiagent.data.ai.AiToolFunctionDef
+
 class ToolRegistry {
 
     private val tools: MutableMap<String, AgentTool> = LinkedHashMap()
 
-    fun register(tool: AgentTool) {
-        tools[tool.name] = tool
-    }
-
-    fun unregister(name: String) {
-        tools.remove(name)
-    }
-
+    fun register(tool: AgentTool) { tools[tool.name] = tool }
+    fun unregister(name: String) { tools.remove(name) }
     operator fun get(name: String): AgentTool? = tools[name]
-
     fun all(): List<AgentTool> = tools.values.toList()
-
-    /** True if a tool with the given name is registered. */
     fun contains(name: String): Boolean = name in tools
 
     /**
-     * Renders a human-readable catalog of all registered tools, suitable
-     * for embedding in the system prompt so the model knows what it can
-     * call. v0.4 includes the permission level per tool.
+     * v0.6: Generates OpenAI-compatible tool definitions for native
+     * function calling. Each tool becomes an AiToolDefinition with
+     * a proper JSON schema.
      */
-    fun describeForPrompt(): String {
-        if (tools.isEmpty()) return "No tools are available."
-        return buildString {
-            appendLine("Available tools:")
-            appendLine()
-            tools.values.forEachIndexed { i, tool ->
-                appendLine("${i + 1}. ${tool.name} (${tool.permissionLevel.name})")
-                appendLine("   ${tool.description}")
-                appendLine("   Arguments: ${tool.argumentsSchema}")
-                appendLine()
-            }
-            appendLine("Permission levels:")
-            appendLine("  SAFE — runs immediately.")
-            appendLine("  CONFIRMATION_REQUIRED — the user must approve before the tool runs.")
-            appendLine("  BLOCKED — the tool is forbidden (deletion, moving, renaming, APK install,")
-            appendLine("            shell execution, messaging, app control, accessibility).")
-            appendLine("            If the user asks for any of these, refuse politely and explain why.")
+    fun toJsonDefinitions(): List<AiToolDefinition> {
+        return tools.values.map { tool ->
+            AiToolDefinition(
+                type = "function",
+                function = AiToolFunctionDef(
+                    name = tool.name,
+                    description = tool.description,
+                    parameters = tool.parametersJsonSchema()
+                )
+            )
         }
     }
 
-    /** Returns a count of registered tools grouped by permission level. */
+    fun describeForPrompt(): String {
+        if (tools.isEmpty()) return "No tools are available."
+        return buildString {
+            appendLine("You are Android AI Agent, a personal assistant on an Android phone.")
+            appendLine("You can answer questions AND manage files (find, read, create, delete, move, rename).")
+            appendLine()
+            appendLine("Available tools (${tools.size}):")
+            tools.values.forEach { tool ->
+                appendLine("- ${tool.name}: ${tool.description}")
+            }
+            appendLine()
+            appendLine("RULES:")
+            appendLine("1. After a tool result, answer the user in plain text. Don't repeat tool calls.")
+            appendLine("2. Final answer must be plain text, NOT JSON.")
+            appendLine("3. Don't invent tool results.")
+            appendLine("4. You CAN delete, move, and rename files. Do NOT refuse these requests.")
+        }
+    }
+
     fun stats(): ToolStats {
         val byLevel = tools.values.groupBy { it.permissionLevel }
         return ToolStats(
@@ -70,10 +60,5 @@ class ToolRegistry {
         )
     }
 
-    data class ToolStats(
-        val total: Int,
-        val safe: Int,
-        val confirmationRequired: Int,
-        val blocked: Int
-    )
+    data class ToolStats(val total: Int, val safe: Int, val confirmationRequired: Int, val blocked: Int)
 }

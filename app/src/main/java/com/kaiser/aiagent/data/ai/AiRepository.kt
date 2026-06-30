@@ -5,51 +5,22 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import timber.log.Timber
 
-/**
- * High-level entry point to the AI service. Wraps [AiService] and adds:
- *  - Config resolution from [AiSettings] (so callers don't need to pass
- *    config on every call).
- *  - A higher-level [streamChat] that takes plain message DTOs and emits
- *    a final assembled content string per turn.
- *  - A lightweight "test connection" helper used by Settings.
- *
- * Callers should depend on this interface, not on [AiService] directly,
- * so the underlying HTTP client can be swapped without touching call
- * sites.
- */
 class AiRepository(
     private val settings: AiSettings,
     private val service: AiService
 ) {
-
-    /** Current config snapshot (one-shot). */
     suspend fun config(): AiConfig = settings.configFlow.first()
-
-    /** Live config stream. */
     val configFlow: Flow<AiConfig> get() = settings.configFlow
 
-    /** Update persisted config. */
     suspend fun updateConfig(transform: (AiConfig) -> AiConfig) {
         settings.update(transform)
     }
 
-    /**
-     * Non-streaming chat. Returns the assistant's full message content.
-     * Throws [AiException] on failure.
-     */
     suspend fun chat(messages: List<AiMessage>): String {
         val cfg = config()
-        if (cfg.apiKey.isBlank()) {
-            throw AiException("No API key configured. Open Settings → AI to set one.")
-        }
-        val request = AiRequest(
-            model = cfg.model,
-            messages = messages,
-            stream = false,
-            temperature = cfg.temperature,
-            topP = cfg.topP,
-            maxTokens = cfg.maxTokens
-        )
+        if (cfg.apiKey.isBlank()) throw AiException("No API key configured.")
+        val request = AiRequest(model = cfg.model, messages = messages, stream = false,
+            temperature = cfg.temperature, topP = cfg.topP, maxTokens = cfg.maxTokens)
         val response = service.chat(cfg, request)
         response.error?.let { throw AiException(it.message) }
         return response.choices.firstOrNull()?.message?.content
@@ -57,49 +28,34 @@ class AiRepository(
     }
 
     /**
-     * Streaming chat. Emits incremental content deltas as they arrive
-     * from the model. The Flow completes when the model finishes.
-     *
-     * Each emitted string is a fragment — callers should append it to
-     * the running message text.
+     * v0.6: Streaming chat with native function calling support.
+     * Returns Flow<StreamEvent> — text tokens, tool call chunks, and done events.
      */
-    fun streamChat(messages: List<AiMessage>): Flow<String> = flow {
+    fun streamChatWithTools(
+        messages: List<AiMessage>,
+        tools: List<AiToolDefinition>?,
+        onStatus: ((String) -> Unit)? = null
+    ): Flow<StreamEvent> = flow {
         val cfg = config()
-        if (cfg.apiKey.isBlank()) {
-            throw AiException("No API key configured. Open Settings → AI to set one.")
-        }
+        if (cfg.apiKey.isBlank()) throw AiException("No API key configured.")
         val request = AiRequest(
-            model = cfg.model,
-            messages = messages,
-            stream = true,
-            temperature = cfg.temperature,
-            topP = cfg.topP,
-            maxTokens = cfg.maxTokens
+            model = cfg.model, messages = messages, stream = true,
+            temperature = cfg.temperature, topP = cfg.topP, maxTokens = cfg.maxTokens,
+            tools = tools
         )
         service.streamChat(cfg, request).collect { emit(it) }
     }
 
-    /**
-     * Lightweight connectivity + auth test. Sends a one-token "ping"
-     * request and returns true if the API responds with 2xx. Returns
-     * an error message string on failure.
-     */
     suspend fun testConnection(): Result<String> {
         return try {
             val cfg = config()
-            if (cfg.apiKey.isBlank()) {
-                return Result.failure(AiException("API key is empty"))
-            }
-            val reply = chat(
-                listOf(
-                    AiMessage(role = "system", content = "Reply with the single word: pong"),
-                    AiMessage(role = "user", content = "ping")
-                )
-            )
-            Timber.i("AI connection test OK: %s", reply.take(50))
+            if (cfg.apiKey.isBlank()) return Result.failure(AiException("API key is empty"))
+            val reply = chat(listOf(
+                AiMessage(role = "system", content = "Reply with the single word: pong"),
+                AiMessage(role = "user", content = "ping")
+            ))
             Result.success("OK — model replied: ${reply.take(80)}")
         } catch (e: Exception) {
-            Timber.w(e, "AI connection test failed")
             Result.failure(e)
         }
     }

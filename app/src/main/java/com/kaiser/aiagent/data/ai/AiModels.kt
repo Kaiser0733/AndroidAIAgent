@@ -6,20 +6,39 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
-/**
- * Request / response models for an OpenAI-compatible chat completions API
- * (works with GLM-4, OpenAI, and any compatible endpoint).
- *
- * The endpoint and model are configurable from Settings; the request body
- * is the same shape regardless of provider.
- */
-
 @Serializable
 data class AiMessage(
-    val role: String,          // "system" | "user" | "assistant" | "tool"
-    val content: String,
+    val role: String,
+    val content: String? = null,
     @SerialName("tool_call_id") val toolCallId: String? = null,
-    val name: String? = null
+    val name: String? = null,
+    @SerialName("tool_calls") val toolCalls: List<AiToolCall>? = null
+)
+
+@Serializable
+data class AiToolCall(
+    val id: String,
+    val type: String = "function",
+    val function: AiToolCallFunction
+)
+
+@Serializable
+data class AiToolCallFunction(
+    val name: String,
+    val arguments: String
+)
+
+@Serializable
+data class AiToolDefinition(
+    val type: String = "function",
+    val function: AiToolFunctionDef
+)
+
+@Serializable
+data class AiToolFunctionDef(
+    val name: String,
+    val description: String,
+    val parameters: JsonObject
 )
 
 @Serializable
@@ -29,17 +48,9 @@ data class AiRequest(
     val stream: Boolean = false,
     val temperature: Double = 0.7,
     @SerialName("top_p") val topP: Double? = null,
-    @SerialName("max_tokens") val maxTokens: Int? = null
+    @SerialName("max_tokens") val maxTokens: Int? = null,
+    val tools: List<AiToolDefinition>? = null
 ) {
-    /**
-     * Serializes this request to JSON, then merges [extraBody] (a raw
-     * JSON object string) into the top level. This is how provider-
-     * specific options like NVIDIA's `chat_template_kwargs` get added
-     * without bloating the strict schema.
-     *
-     * Returns null if [extraBody] is blank — the caller should fall
-     * back to plain `Json.encodeToString(...)` in that case.
-     */
     fun toJsonWithExtraBody(extraBody: String): String {
         if (extraBody.isBlank()) {
             return DefaultJson.encodeToString(serializer(), this)
@@ -55,7 +66,7 @@ data class AiRequest(
             ignoreUnknownKeys = true
             isLenient = true
             explicitNulls = false
-            encodeDefaults = true
+            encodeDefaults = false
         }
     }
 }
@@ -80,7 +91,22 @@ data class AiChoice(
 @Serializable
 data class AiDelta(
     val role: String? = null,
-    val content: String? = null
+    val content: String? = null,
+    @SerialName("tool_calls") val toolCalls: List<AiToolCallDelta>? = null
+)
+
+@Serializable
+data class AiToolCallDelta(
+    val index: Int = 0,
+    val id: String? = null,
+    val type: String? = null,
+    val function: AiToolCallFunctionDelta? = null
+)
+
+@Serializable
+data class AiToolCallFunctionDelta(
+    val name: String? = null,
+    val arguments: String? = null
 )
 
 @Serializable

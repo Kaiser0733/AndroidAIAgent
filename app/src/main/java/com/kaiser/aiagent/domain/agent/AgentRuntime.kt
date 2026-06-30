@@ -3,47 +3,23 @@ package com.kaiser.aiagent.domain.agent
 import com.kaiser.aiagent.data.ai.AiException
 import com.kaiser.aiagent.data.ai.AiMessage
 import com.kaiser.aiagent.data.ai.AiRepository
+import com.kaiser.aiagent.data.ai.AiToolCall
+import com.kaiser.aiagent.data.ai.AiToolCallFunction
+import com.kaiser.aiagent.data.ai.StreamEvent
 import com.kaiser.aiagent.data.logging.LogRepository
 import com.kaiser.aiagent.domain.tools.ToolCall
-import com.kaiser.aiagent.domain.tools.ToolCallParseResult
-import com.kaiser.aiagent.domain.tools.ToolCallParser
 import com.kaiser.aiagent.domain.tools.ToolExecutor
 import com.kaiser.aiagent.domain.tools.ToolRegistry
 import com.kaiser.aiagent.domain.tools.ToolResult
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collect
 import timber.log.Timber
 
 /**
- * Coordinates the multi-turn agent loop:
- *
- *   1. Build a context (system prompt + history + new user message).
- *   2. Stream the model's response.
- *   3. When the response completes, scan it for a tool-call request.
- *   4. If a tool call is found: execute it (going through the
- *      PermissionManager inside [ToolExecutor]), append the tool
- *      result to the context, and loop back to step 2.
- *   5. If no tool call is found: the response is final; return it.
- *
- * The runtime is UI-agnostic — it does not import any Compose types.
- * It exposes a [StateFlow]<[AgentState]> for the UI to observe and
- * calls back via lambdas for streaming deltas and final results.
- *
- * v0.4 changes:
- *  - Permission enforcement moved INTO ToolExecutor (which delegates
- *    to PermissionManager). The runtime no longer needs a separate
- *    onConfirmationRequired callback; the UI observes
- *    PermissionManager.pendingConfirmation instead.
- *  - ToolResult uses the new success/data/error/metadata shape.
- *  - Tool calls pass conversationId through to ToolExecutor so the
- *    PermissionManager can include it in the pending-confirmation
- *    request (useful if the UI wants to display the conversation title
- *    alongside the confirmation dialog).
- *
- * v0.3 caps the number of tool iterations per turn at 5 to prevent
- * infinite loops.
+ * v0.6: Complete rewrite for native function calling.
+ * The model receives tool definitions via the `tools` API parameter
+ * and returns structured `tool_calls` in the response.
  */
 class AgentRuntime(
     private val repository: AiRepository,
@@ -51,47 +27,28 @@ class AgentRuntime(
     private val toolExecutor: ToolExecutor,
     private val logRepository: LogRepository? = null
 ) {
-
-    private val parser = ToolCallParser()
-
     private val _state = MutableStateFlow(AgentState.IDLE)
     val state: StateFlow<AgentState> = _state.asStateFlow()
 
-    /**
-     * Runs a single agent turn.
-     *
-     * @param history prior conversation (without the new user message).
-     * @param userMessage the new user input.
-     * @param conversationId optional — passed to ToolExecutor for the
-     *   permission confirmation flow.
-     * @param onDelta called for each streamed text fragment.
-     * @param onFinal called with the full assistant response when the
-     *   loop completes (whether or not tools were called).
-     *
-     * On error, [onFinal] is NOT called; instead, the error is written
-     * to [state.lastError] and re-thrown to the caller.
-     */
     suspend fun runTurn(
         history: List<AiMessage>,
         userMessage: String,
         conversationId: String? = null,
         onDelta: (String) -> Unit,
-        onFinal: (String) -> Unit
+        onFinal: (String) -> Unit,
+        onStatus: ((String) -> Unit)? = null
     ) {
-        val systemPrompt = AgentContext.buildSystemPrompt(toolRegistry.describeForPrompt())
+        val systemPrompt = toolRegistry.describeForPrompt()
         val messages = mutableListOf<AiMessage>()
         messages.add(AiMessage(role = "system", content = systemPrompt))
-        // v0.5.19: truncate history to prevent context overflow
         val truncatedHistory = if (history.size > 4) history.takeLast(4) else history
         messages.addAll(truncatedHistory)
         messages.add(AiMessage(role = "user", content = userMessage))
 
-        val context = AgentContext(messages = messages, systemPrompt = systemPrompt)
-
         _state.value = AgentState(busy = true, streamingText = "")
 
         try {
-            val finalText = runLoop(context, conversationId, onDelta)
+            val finalText = runLoop(messages, conversationId, onDelta, onStatus)
             _state.value = AgentState.IDLE
             onFinal(finalText)
         } catch (t: Throwable) {
@@ -101,135 +58,103 @@ class AgentRuntime(
         }
     }
 
-    /**
-     * Inner loop: stream model response → check for tool call → repeat.
-     * Returns the final assistant text (the one that did NOT contain a
-     * tool call).
-     */
     private suspend fun runLoop(
-        context: AgentContext,
+        messages: MutableList<AiMessage>,
         conversationId: String?,
-        onDelta: (String) -> Unit
+        onDelta: (String) -> Unit,
+        onStatus: ((String) -> Unit)? = null
     ): String {
+        val toolDefs = toolRegistry.toJsonDefinitions()
         var iteration = 0
+        val maxIterations = 5
+
         while (true) {
-            if (iteration >= context.maxToolIterations) {
-                Timber.w("Hit max tool iterations (%d); stopping", context.maxToolIterations)
-                val lastResult = _state.value.lastToolResult
-                val lastText = _state.value.streamingText
-                return when {
-                    lastResult != null && lastResult.success ->
-                        "Based on the tool result: ${lastResult.data}"
-                    lastText.isNotBlank() -> lastText
-                    else -> "I attempted to use a tool but couldn't complete the request. " +
-                        "Please try rephrasing your question, or ask me something that " +
-                        "doesn't require a tool."
+            if (iteration >= maxIterations) {
+                Timber.w("Hit max iterations (%d)", maxIterations)
+                return _state.value.streamingText.ifBlank {
+                    "I reached the maximum number of tool calls for this turn."
                 }
             }
 
-            // Stream the model's response. Accumulate the full text.
-            val accumulator = StringBuilder()
-            try {
-                repository.streamChat(context.messages.toList()).collect { delta ->
-                    accumulator.append(delta)
-                    _state.value = _state.value.copy(streamingText = accumulator.toString())
-                    onDelta(delta)
+            val textBuilder = StringBuilder()
+            val toolCallAccumulator = mutableMapOf<Int, ToolCallAccum>()
+
+            repository.streamChatWithTools(messages, toolDefs, onStatus).collect { event ->
+                when (event) {
+                    is StreamEvent.Text -> {
+                        textBuilder.append(event.token)
+                        _state.value = _state.value.copy(streamingText = textBuilder.toString())
+                        onDelta(event.token)
+                    }
+                    is StreamEvent.ToolCallChunk -> {
+                        val acc = toolCallAccumulator.getOrPut(event.index) { ToolCallAccum() }
+                        if (event.id != null) acc.id = event.id
+                        if (event.name != null) acc.name = event.name
+                        acc.arguments.append(event.arguments)
+                    }
+                    is StreamEvent.Done -> {
+                        Timber.i("Stream done: finishReason=%s", event.finishReason)
+                    }
+                    is StreamEvent.Error -> {
+                        throw event.error
+                    }
                 }
-            } catch (e: AiException) {
-                throw e
             }
 
-            val responseText = accumulator.toString().trim()
-            Timber.i("Model iteration %d produced %d chars", iteration, responseText.length)
-            logRepository?.appendUpdateLog(
-                "Model iter $iteration (${responseText.length} chars): " +
-                    responseText.take(1000).replace("\n", "\\n")
-            )
+            val responseText = textBuilder.toString().trim()
 
-            // Parrot detection.
-            if (iteration > 0 && looksLikeParrot(responseText)) {
-                Timber.w("Parrot detected on iteration %d: %s", iteration, responseText.take(100))
-                logRepository?.appendUpdateLog("PARROT DETECTED — adding stronger nudge")
-                context.messages.add(
-                    AiMessage(
-                        role = "user",
-                        content = "Stop repeating yourself. You have already called the tool and received the result. " +
-                            "Now answer the user's ORIGINAL question in plain natural-language English. " +
-                            "Do not mention tools. Do not mention calling anything. Just answer the question directly."
+            // Check if we got tool calls
+            if (toolCallAccumulator.isNotEmpty()) {
+                val toolCalls = toolCallAccumulator.toSortedMap().values.map { acc ->
+                    AiToolCall(
+                        id = acc.id,
+                        function = AiToolCallFunction(name = acc.name, arguments = acc.arguments.toString())
                     )
-                )
+                }
+
+                // Add assistant message with tool_calls
+                messages.add(AiMessage(
+                    role = "assistant",
+                    content = responseText.ifBlank { null },
+                    toolCalls = toolCalls
+                ))
+
+                // Execute each tool call
+                for (tc in toolCalls) {
+                    onStatus?.invoke("Running: ${tc.function.name}")
+                    val call = ToolCall(tool = tc.function.name, arguments = tc.function.arguments)
+                    val result: ToolResult = try {
+                        kotlinx.coroutines.withTimeout(30_000L) {
+                            toolExecutor.execute(call, conversationId) { name, r ->
+                                recordToolCall(name, r)
+                            }
+                        }
+                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                        ToolResult(false, "", "Tool '${tc.function.name}' timed out after 30s.")
+                    }
+
+                    val truncatedData = if (result.data.length > 800)
+                        result.data.take(800) + "..." else result.data
+
+                    messages.add(AiMessage(
+                        role = "tool",
+                        content = truncatedData.ifBlank { result.error ?: "{}" },
+                        toolCallId = tc.id,
+                        name = tc.function.name
+                    ))
+
+                    logRepository?.appendUpdateLog(
+                        "Tool ${tc.function.name}: ${if (result.success) "OK" else "FAIL"} ${truncatedData.take(100)}"
+                    )
+                }
+
                 iteration++
+                _state.value = _state.value.copy(streamingText = "")
                 continue
             }
 
-            // Scan for a tool call.
-            when (val parsed = parser.parse(responseText)) {
-                is ToolCallParseResult.None -> {
-                    // Final response — no tool call.
-                    return responseText
-                }
-                is ToolCallParseResult.Malformed -> {
-                    val result = ToolResult(
-                        success = false,
-                        data = "",
-                        error = "Malformed tool call: ${parsed.error}. Raw: ${parsed.raw.take(200)}"
-                    )
-                    recordToolCall("(malformed)", result)
-                    context.messages.add(
-                        AiMessage(
-                            role = "assistant",
-                            content = "I'll attempt to call a tool, but my call was malformed."
-                        )
-                    )
-                    context.messages.add(
-                        AiMessage(
-                            role = "user",
-                            content = "[TOOL RESULT] ${result.render()}\n\n" +
-                                "Please continue your response to the user, taking this result into account."
-                        )
-                    )
-                    iteration++
-                    continue
-                }
-                is ToolCallParseResult.Found -> {
-                    val call: ToolCall = parsed.call
-                    // Wrap the tool call as an internal note. Past tense + bracketed
-                    // so the model doesn't parrot it back as a future promise.
-                    context.messages.add(
-                        AiMessage(
-                            role = "assistant",
-                            content = "[Tool call executed: ${call.tool}]"
-                        )
-                    )
-                    // v0.5.19: tool timeout + result truncation
-                    val result: ToolResult = try {
-                        kotlinx.coroutines.withTimeout(30_000L) {
-                            toolExecutor.execute(
-                                call = call,
-                                conversationId = conversationId,
-                                onResult = { toolName, r -> recordToolCall(toolName, r) }
-                            )
-                        }
-                    } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                        ToolResult(false, "", "Tool '${call.tool}' timed out after 30s.")
-                    }
-                    val successOrError = if (result.success) "succeeded" else "failed"
-                    val truncatedResult = if (result.data.length > 800) result.data.take(800) + "..." else result.data
-                    context.messages.add(
-                        AiMessage(
-                            role = "user",
-                            content = buildString {
-                                appendLine("The ${call.tool} tool $successOrError. Result:")
-                                appendLine(truncatedResult)
-                                appendLine()
-                                appendLine("Using this result, answer the user's original question in plain English. Do not call any more tools. Do not repeat yourself.")
-                            }
-                        )
-                    )
-                    iteration++
-                    // Loop back to stream another response.
-                }
-            }
+            // No tool calls — final text response
+            return responseText
         }
     }
 
@@ -241,20 +166,11 @@ class AgentRuntime(
         )
     }
 
-    /**
-     * Returns true if [text] looks like the model parroting back a prior
-     * internal message rather than giving a real answer.
-     */
-    private fun looksLikeParrot(text: String): Boolean {
-        val lower = text.lowercase()
-        return lower.contains("[tool call executed:") ||
-            lower.contains("i'll call the \"") ||
-            lower.contains("i'll call the '") ||
-            lower.contains("i'll call the ") && lower.contains("tool to look that up")
-    }
+    fun resetTurnCounters() { _state.value = AgentState.IDLE }
 
-    /** Resets per-turn counters. Call before starting a new turn. */
-    fun resetTurnCounters() {
-        _state.value = AgentState.IDLE
+    private class ToolCallAccum {
+        var id: String = ""
+        var name: String = ""
+        val arguments: StringBuilder = StringBuilder()
     }
 }

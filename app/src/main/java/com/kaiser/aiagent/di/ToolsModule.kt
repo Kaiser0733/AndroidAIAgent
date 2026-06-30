@@ -20,6 +20,7 @@ import com.kaiser.aiagent.tools.file.ListStorageRootsTool
 import com.kaiser.aiagent.tools.file.ReadTextFileTool
 import com.kaiser.aiagent.tools.file.SearchFilesTool
 import com.kaiser.aiagent.tools.memory.SearchMemoryTool
+import com.kaiser.aiagent.tools.system.OpenAppTool
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.GlobalContext
 import org.koin.dsl.module
@@ -65,6 +66,8 @@ val toolsModule = module {
     single { RenameFileTool() }
     single { AccessibilityTool() }
     single { AppControlTool() }
+    // v0.6: System tools
+    single { OpenAppTool(androidContext()) }
 }
 
 /**
@@ -93,7 +96,8 @@ fun registerAllTools(registry: ToolRegistry) {
         koin.get<MoveFileTool>(),
         koin.get<RenameFileTool>(),
         koin.get<AccessibilityTool>(),
-        koin.get<AppControlTool>()
+        koin.get<AppControlTool>(),
+        koin.get<OpenAppTool>()
     )
     for (tool in tools) {
         registry.register(tool)
