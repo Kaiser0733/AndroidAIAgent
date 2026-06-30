@@ -40,7 +40,6 @@ captures/
 
 # Keystore files
 *.jks
-*.keystore
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild
@@ -51,7 +50,6 @@ google-services.json
 
 # Secrets / credentials — NEVER commit
 secrets.properties
-keystore.properties
 *.env
 .env*
 
