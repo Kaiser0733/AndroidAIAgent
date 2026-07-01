@@ -56,12 +56,33 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Returns a flat list of clickable elements currently visible on
-     * the screen. Each entry is "text|className|bounds".
+     * v0.6.4: Returns a flat list of clickable elements currently
+     * visible on the screen. Each entry is "text|className|bounds".
+     *
+     * Polls for up to 5 seconds for an active window to appear —
+     * useful when read_screen is called immediately after open_app
+     * and the target app is still loading.
      */
     fun readScreen(): String {
-        val root = rootInActiveWindow ?: return "ERROR: no active window"
+        var root = rootInActiveWindow
+        // v0.6.4: if no active window yet, poll for up to 5 seconds.
+        // This handles the case where read_screen is called right
+        // after open_app and the target app is still coming up.
+        var pollMs = 0
+        while (root == null && pollMs < 5000) {
+            try { Thread.sleep(200) } catch (e: InterruptedException) { break }
+            pollMs += 200
+            root = rootInActiveWindow
+        }
+        if (root == null) {
+            return "ERROR: no active window after waiting ${pollMs}ms. " +
+                "The accessibility service may not be running, or the " +
+                "target app crashed. Call wait_seconds(2) and try again."
+        }
+
+        val pkg = root.packageName?.toString() ?: "(unknown)"
         val sb = StringBuilder()
+        sb.appendLine("WINDOW: $pkg")
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.addLast(root)
         var count = 0
@@ -90,7 +111,16 @@ class AgentAccessibilityService : AccessibilityService() {
                 node.getChild(i)?.let { queue.addLast(it) }
             }
         }
-        return sb.toString().ifBlank { "ERROR: no interactive elements found" }
+        val out = sb.toString()
+        // If we found elements but they're suspiciously few (≤2) AND
+        // the user just opened an app, the screen is probably still
+        // loading. Tell the model to wait and retry.
+        if (count <= 2) {
+            return out + "\nHINT: only $count elements found — the screen " +
+                "may still be loading. Call wait_seconds(2) and then " +
+                "read_screen again."
+        }
+        return out.ifBlank { "ERROR: no interactive elements found" }
     }
 
     /**

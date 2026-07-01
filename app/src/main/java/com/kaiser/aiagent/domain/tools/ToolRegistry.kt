@@ -98,6 +98,21 @@ class ToolRegistry {
             appendLine("If tap_text returns AMBIGUOUS, re-call with index=0 to pick the top-ranked match.")
             appendLine("If type_text returns 'no editable text field', the search box didn't open — call")
             appendLine("read_screen to see what happened, then try tap_text on a different label.")
+            appendLine()
+            appendLine("LOADING DELAYS (v0.6.4):")
+            appendLine("- open_app now waits for the target app to actually reach the foreground")
+            appendLine("  (up to 6 seconds) before returning. So read_screen right after open_app")
+            appendLine("  should usually work.")
+            appendLine("- If read_screen returns 'HINT: only N elements found — the screen may")
+            appendLine("  still be loading', call wait_seconds(2) and then read_screen again.")
+            appendLine("- If read_screen returns 'ERROR: no active window', call wait_seconds(3)")
+            appendLine("  and retry once. If it still fails, tell the user the accessibility")
+            appendLine("  service may not be enabled.")
+            appendLine("- After tap_text opens a new screen (e.g. tapping Search opens the search")
+            appendLine("  panel), call wait_seconds(1) before type_text — the search box needs a")
+            appendLine("  moment to gain focus.")
+            appendLine("- After type_text triggers a search (e.g. tapping the submit button),")
+            appendLine("  call wait_seconds(2) before read_screen so the results have time to load.")
         }
     }
 

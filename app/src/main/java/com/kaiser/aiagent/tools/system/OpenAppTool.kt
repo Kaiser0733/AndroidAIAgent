@@ -89,11 +89,31 @@ class OpenAppTool(private val context: Context) : AgentTool {
 
         context.startActivity(launchIntent)
 
-        // Give the other app a moment to come up before any subsequent
-        // accessibility tool (read_screen / tap_text) tries to inspect
-        // its window. 1s is usually enough for the launcher activity
-        // to reach the foreground and start drawing.
-        Thread.sleep(1000)
+        // v0.6.4: wait for the target app to actually reach the
+        // foreground before returning. Polls the accessibility service
+        // for up to 6 seconds — returns as soon as a window belonging
+        // to the target package becomes the active window.
+        //
+        // This fixes the v0.6.3 bug where open_app returned after a
+        // fixed 1s wait, but YouTube (a heavy app) was still showing
+        // the splash screen. read_screen then ran against the splash
+        // and returned an empty tree, so the agent gave up.
+        val targetPkg = match.activityInfo.packageName
+        var waited = 0
+        while (waited < 6000) {
+            Thread.sleep(300)
+            waited += 300
+            val svc = com.kaiser.aiagent.accessibility.AgentAccessibilityService.instance
+            if (svc != null) {
+                val root = try { svc.rootInActiveWindow } catch (e: Exception) { null }
+                if (root != null && root.packageName?.toString() == targetPkg) {
+                    // The target app's window is now the active window.
+                    // Give it another 500ms to finish laying out its UI.
+                    Thread.sleep(500)
+                    break
+                }
+            }
+        }
 
         val appNameResolved: String = match.loadLabel(pm).toString()
         ToolResult(
@@ -102,7 +122,8 @@ class OpenAppTool(private val context: Context) : AgentTool {
                 put("app_name", appNameResolved)
                 put("package", match.activityInfo.packageName)
                 put("opened", true)
-                put("hint", "Call read_screen next to see what is on screen, then tap_text or type_text to interact.")
+                put("waited_ms", waited)
+                put("hint", "The app should now be in the foreground. Call read_screen to see what's on screen. If the screen looks empty or is still loading, call wait_seconds(2) and try read_screen again.")
             }.toString(),
             error = null,
             metadata = mapOf("app" to appNameResolved)

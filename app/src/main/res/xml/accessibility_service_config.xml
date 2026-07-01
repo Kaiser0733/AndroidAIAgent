@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  v0.6.2: Accessibility service configuration.
+  v0.6.4: Accessibility service configuration.
   - accessibilityEventTypes: we listen for all events but the service
     does not actually act on them; the agent polls on demand.
   - canRetrieveWindowContent: REQUIRED — without this we cannot walk
     the accessibility tree to find text/buttons to tap.
   - canPerformGestures: REQUIRED — needed for swipe/scroll gestures.
+  - flagRetrieveInteractiveWindows: v0.6.4 — lets getWindows() return
+    ALL active windows (dialogs, popups, etc.) instead of just the
+    "active" one. Useful when the target app shows a popup or the
+    keyboard steals focus.
   - packageNames: empty = all packages. The agent must be able to
     drive any app the user asks it to.
 -->
@@ -13,7 +17,7 @@
     android:description="@string/accessibility_service_description"
     android:accessibilityEventTypes="typeAllMask"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds"
+    android:accessibilityFlags="flagDefault|flagIncludeNotImportantViews|flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
     android:notificationTimeout="100" />

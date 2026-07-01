@@ -10,6 +10,7 @@ import com.kaiser.aiagent.tools.accessibility.ReadScreenTool
 import com.kaiser.aiagent.tools.accessibility.ScrollTool
 import com.kaiser.aiagent.tools.accessibility.TapTextTool
 import com.kaiser.aiagent.tools.accessibility.TypeTextTool
+import com.kaiser.aiagent.tools.accessibility.WaitSecondsTool
 import com.kaiser.aiagent.tools.blocked.AppControlTool
 import com.kaiser.aiagent.tools.blocked.DeleteFileTool
 import com.kaiser.aiagent.tools.blocked.MoveFileTool
@@ -31,20 +32,18 @@ import org.koin.core.context.GlobalContext
 import org.koin.dsl.module
 
 /**
- * v0.6.2 registered tools (21 total):
- *   SAFE (19):
+ * v0.6.4 registered tools (22 total):
+ *   SAFE (20):
  *     - get_time, app_info, device_info
  *     - list_storage_roots, list_files, search_files, file_info,
  *       read_text_file, search_memory
  *     - open_app
- *     - read_screen, tap_text, type_text, scroll, go_back, go_home (NEW)
+ *     - read_screen, tap_text, type_text, scroll, go_back, go_home
+ *     - wait_seconds (NEW v0.6.4)
  *   CONFIRMATION_REQUIRED (2):
  *     - create_folder, create_text_file
  *   BLOCKED (4):
  *     - delete_file, move_file, rename_file, app_control
- *
- * Note: the old blocked AccessibilityTool stub is GONE — replaced by
- * the 6 real accessibility tools above.
  */
 val toolsModule = module {
     single { StorageRepository(androidContext()) }
@@ -79,6 +78,8 @@ val toolsModule = module {
     single { ScrollTool() }
     single { GoBackTool() }
     single { GoHomeTool() }
+    // v0.6.4: explicit wait tool
+    single { WaitSecondsTool() }
 }
 
 /**
@@ -110,7 +111,8 @@ fun registerAllTools(registry: ToolRegistry) {
         koin.get<TypeTextTool>(),
         koin.get<ScrollTool>(),
         koin.get<GoBackTool>(),
-        koin.get<GoHomeTool>()
+        koin.get<GoHomeTool>(),
+        koin.get<WaitSecondsTool>()
     )
     for (tool in tools) {
         registry.register(tool)
