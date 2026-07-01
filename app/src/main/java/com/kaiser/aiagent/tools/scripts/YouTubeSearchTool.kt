@@ -119,13 +119,20 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
                 "Couldn't type into YouTube's search box. $typeResult")
         }
 
-        // Step 6: Press enter to submit the search
-        val enterResult = AgentAccessibilityController.run("press_enter") { svc ->
-            svc.pressEnter()
+        // Step 6: Submit the search.
+        // v0.7.2: YouTube has NO submit button — only the keyboard's
+        // enter key or tapping an autocomplete suggestion works.
+        // submitYouTubeSearch tries:
+        //   1. ACTION_IME_ENTER (with verification)
+        //   2. Tap first autocomplete suggestion (most reliable)
+        //   3. ACTION_CLICK on EditText (last resort)
+        // NEVER taps voice/mic.
+        val submitResult = AgentAccessibilityController.run("submit_search") { svc ->
+            svc.submitYouTubeSearch()
         }
-        if (enterResult.startsWith("ERROR")) {
+        if (submitResult.startsWith("ERROR")) {
             return@withContext ToolResult(false, "",
-                "Couldn't submit the search. $enterResult")
+                "Typed '$query' but couldn't submit the search. $submitResult")
         }
 
         // Step 7: Poll for results to appear (up to 15s — handles slow internet)

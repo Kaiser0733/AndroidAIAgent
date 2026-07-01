@@ -249,72 +249,187 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * v0.6.6: Submits the currently-focused input field. This is the
-     * correct way to "press Enter" on a search box after type_text.
+     * v0.7.2: Submits a YouTube search.
      *
-     * type_text uses ACTION_SET_TEXT which bypasses the keyboard, so
-     * the IME's "Search/Go/Submit" button never gets pressed. This
-     * tool fixes that by trying, in order:
-     *   1. AccessibilityNodeInfo.ACTION_IME_ENTER on the focused
-     *      EditText (Android 11+ / API 30+). This is the OS-level
-     *      way to trigger the IME action (search, go, done, etc.)
-     *      the app has set on the field.
-     *   2. performAction(ACTION_CLICK) on the focused EditText —
-     *      some apps bind submit to click.
-     *   3. Find any visible button labelled "Search", "Go", "Submit",
-     *      "Done", or "Enter" and tap it via tapText.
+     * YouTube's search panel has NO submit button — only the keyboard's
+     * enter key or tapping an autocomplete suggestion works. This method
+     * tries multiple strategies:
      *
-     * Returns OK on the first strategy that succeeds.
+     *   1. ACTION_IME_ENTER on the focused EditText (the proper way,
+     *      but fails if the IME isn't connected after SET_TEXT).
+     *   2. Tap the first autocomplete suggestion (YouTube shows these
+     *      immediately after typing — tapping one searches for it).
+     *      This is the MOST RELIABLE strategy for YouTube.
+     *   3. ACTION_CLICK on the EditText itself (last resort).
+     *
+     * NEVER taps anything with "voice" or "mic" in the label — that's
+     * the v0.7.0/v0.7.1 bug where the mic got opened.
      */
-    fun pressEnter(): String {
+    fun submitYouTubeSearch(): String {
         val root = rootInActiveWindow ?: return "ERROR: no active window"
 
-        // Step 1+2: try IME enter and click on the focused EditText.
+        // Strategy 1: ACTION_IME_ENTER on the focused EditText
         val focus = findFocusedEditText(root) ?: findFirstEditText(root)
         if (focus != null) {
-            if (!focus.isFocused) focus.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            focus.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+            try { Thread.sleep(300) } catch (e: InterruptedException) {}
 
-            // API 30+ has ACTION_IME_ENTER (id 0x10000 + 17 = 65553)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 try {
-                    val imeEnterAction = 65553 // AccessibilityNodeInfo.ACTION_IME_ENTER
+                    val imeEnterAction = 65553 // ACTION_IME_ENTER
                     if (focus.performAction(imeEnterAction)) {
-                        return "OK press_enter (ACTION_IME_ENTER on focused field)"
+                        // Verify: wait 1.5s and check if the screen changed.
+                        // If autocomplete suggestions disappeared, the search worked.
+                        Thread.sleep(1500)
+                        val newRoot = rootInActiveWindow
+                        if (newRoot != null && !hasAutocompleteSuggestions(newRoot)) {
+                            return "OK submitted (ACTION_IME_ENTER)"
+                        }
+                        // If suggestions are still there, IME enter didn't work.
+                        // Fall through to strategy 2.
                     }
                 } catch (e: Exception) {
                     Timber.w(e, "ACTION_IME_ENTER failed")
                 }
             }
+        }
 
-            // Fallback: click on the EditText itself.
-            if (focus.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                return "OK press_enter (ACTION_CLICK on focused field)"
+        // Strategy 2: Tap the first autocomplete suggestion.
+        // YouTube shows suggestions immediately after typing. Each is
+        // a tappable row with a magnifying glass icon. Tapping one
+        // searches for that suggestion immediately.
+        val suggestion = findFirstAutocompleteSuggestion(rootInActiveWindow ?: root)
+        if (suggestion != null) {
+            val b = android.graphics.Rect()
+            suggestion.getBoundsInScreen(b)
+            if (dispatchTap(b.exactCenterX(), b.exactCenterY())) {
+                return "OK submitted (tapped first autocomplete suggestion at ${b.exactCenterX().toInt()},${b.exactCenterY().toInt()})"
             }
         }
 
-        // Step 3: look for a submit button on screen.
-        val submitLabels = listOf("Search", "Go", "Submit", "Done", "Enter", "Send", "Next")
-        for (label in submitLabels) {
-            val matches = findAllMatchingNodes(root, label)
-            // Only consider clickable ones for submit
-            val clickables = matches.filter { it.node.isClickable || it.cls == "Button" || it.cls == "ImageButton" }
-            if (clickables.isNotEmpty()) {
-                // Rank: shortest label first, then clickable.
-                val chosen = clickables.sortedWith(
-                    compareBy({ it.label.length }, { if (it.node.isClickable) 0 else 1 })
-                ).first()
-                val b = chosen.bounds
-                var ok = chosen.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                if (!ok) ok = dispatchTap(b.exactCenterX(), b.exactCenterY())
-                if (ok) {
-                    return "OK press_enter (tapped '${chosen.label}' button)"
+        // Strategy 3: Click the EditText itself (some apps bind submit to click)
+        if (focus != null) {
+            if (focus.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return "OK submitted (ACTION_CLICK on EditText)"
+            }
+        }
+
+        return "ERROR: couldn't submit search. No IME enter, no autocomplete suggestions, " +
+            "and EditText click failed. YouTube's UI may have changed."
+    }
+
+    /**
+     * v0.7.2: Detects whether the current screen has YouTube autocomplete
+     * suggestions (used to verify whether ACTION_IME_ENTER actually worked).
+     */
+    private fun hasAutocompleteSuggestions(root: AccessibilityNodeInfo): Boolean {
+        // Autocomplete suggestions are tappable rows below the search bar
+        // that contain text matching the query. They typically have a
+        // magnifying glass icon (content description "Search" but NOT "Voice").
+        var count = 0
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.addLast(root)
+        while (queue.isNotEmpty() && count < 50) {
+            val node = queue.removeFirst()
+            if (node.isClickable) {
+                val texts = mutableListOf<String>()
+                collectTexts(node, texts)
+                if (texts.isNotEmpty() && texts.size <= 3) {
+                    // A suggestion row has 1-3 text children (the suggestion text)
+                    // and is below the search bar (bounds.top > 200)
+                    val b = android.graphics.Rect()
+                    node.getBoundsInScreen(b)
+                    if (b.top > 200 && b.height() > 80 && b.height() < 300) {
+                        count++
+                    }
                 }
             }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.addLast(it) }
+            }
         }
+        return count >= 2  // 2+ clickable rows below the search bar = suggestions visible
+    }
 
-        return "ERROR: could not submit. The focused field has no IME action, and no " +
-            "Search/Go/Submit button was found on screen. Call read_screen to see what " +
-            "buttons are available, then tap_text on the right one."
+    /**
+     * v0.7.2: Finds the first autocomplete suggestion on YouTube's
+     * search panel. Suggestions are tappable rows below the search
+     * bar, each containing text + a magnifying glass icon.
+     *
+     * Returns the AccessibilityNodeInfo of the suggestion row, or null.
+     */
+    private fun findFirstAutocompleteSuggestion(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.addLast(root)
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            if (node.isClickable) {
+                val texts = mutableListOf<String>()
+                collectTexts(node, texts)
+                val b = android.graphics.Rect()
+                node.getBoundsInScreen(b)
+                // A suggestion row: below the search bar, reasonable height,
+                // has text content, not the mic/voice button
+                val isBelowSearchBar = b.top > 200
+                val isReasonableHeight = b.height() in 80..300
+                val hasText = texts.isNotEmpty()
+                val isNotVoiceMic = texts.none {
+                    it.lowercase().contains("voice") ||
+                    it.lowercase().contains("mic") ||
+                    it.lowercase().contains("speech")
+                }
+                if (isBelowSearchBar && isReasonableHeight && hasText && isNotVoiceMic) {
+                    // Verify this is actually a suggestion by checking it's
+                    // in the upper half of the screen (suggestions are right
+                    // below the search bar)
+                    if (b.top < resources.displayMetrics.heightPixels / 2) {
+                        return node
+                    }
+                }
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.addLast(it) }
+            }
+        }
+        return null
+    }
+
+    /**
+     * v0.7.1: Fallback for YouTube search submit. Looks for a search
+     * icon in the top 25% of the screen (the top bar) and taps it.
+     * On YouTube, the same magnifying glass icon that opens the
+     * search panel also submits the search when tapped again.
+     *
+     * Excludes anything with "voice" or "mic" in the label.
+     */
+    fun tapSubmitIconInTopBar(): String {
+        val root = rootInActiveWindow ?: return "ERROR: no active window"
+        val screenHeight = resources.displayMetrics.heightPixels
+        val topBarThreshold = screenHeight / 4  // top 25% of screen
+
+        val matches = findAllMatchingNodes(root, "Search")
+        val topBarClickable = matches.filter { m ->
+            (m.node.isClickable || m.cls == "ImageButton" || m.cls == "ImageView") &&
+            m.bounds.top < topBarThreshold &&
+            m.bounds.width() < 300 &&  // icon-sized, not a full button
+            m.bounds.height() < 300 &&
+            !m.label.lowercase().contains("voice") &&
+            !m.label.lowercase().contains("mic") &&
+            !m.label.lowercase().contains("speech")
+        }
+        if (topBarClickable.isEmpty()) {
+            return "ERROR: no search icon found in the top bar"
+        }
+        val chosen = topBarClickable.sortedWith(
+            compareBy(
+                { if (it.exact) 0 else 1 },
+                { it.bounds.width() }  // smaller = more icon-like
+            )
+        ).first()
+        val b = chosen.bounds
+        val ok = dispatchTap(b.exactCenterX(), b.exactCenterY())
+        return if (ok) "OK tapped search icon at top bar (${b.exactCenterX().toInt()},${b.exactCenterY().toInt()})"
+        else "ERROR: tap gesture failed at top bar search icon"
     }
 
     /** Presses the BACK hardware key via the global action. */
