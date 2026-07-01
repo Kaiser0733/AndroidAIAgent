@@ -119,10 +119,25 @@ class AiService {
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 val code = response?.code
+                // v0.6.8: capture Retry-After header on 429 so the
+                // agent runtime knows exactly how long to wait before
+                // retrying. Groq sends this as seconds; some providers
+                // send it as an HTTP-date. We handle both.
+                val retryAfterRaw = response?.header("Retry-After")
+                val retryAfterSecs = retryAfterRaw?.toIntOrNull()
                 val body = try { response?.body?.string() } catch(e:Exception) { null }
                 response?.close()
                 val detail = parseErrorMessage(body.orEmpty()) ?: body?.take(300) ?: t?.message ?: "unknown"
-                streamError = AiException("HTTP $code: $detail", t)
+                // Embed retry-after in the error message so the runtime
+                // can parse it out and wait the right amount of time.
+                val msg = if (code == 429 && retryAfterSecs != null) {
+                    "HTTP 429 (retry-after=${retryAfterSecs}s): $detail"
+                } else if (code == 429) {
+                    "HTTP 429 (retry-after=unknown): $detail"
+                } else {
+                    "HTTP $code: $detail"
+                }
+                streamError = AiException(msg, t)
                 channel.close()
             }
 

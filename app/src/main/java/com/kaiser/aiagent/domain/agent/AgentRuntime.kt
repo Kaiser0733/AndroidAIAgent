@@ -145,16 +145,33 @@ class AgentRuntime(
                         if (isRateLimit) {
                             throw AiException(
                                 "Rate limited by the AI provider after $streamAttempts attempts. " +
-                                "Wait 30-60 seconds and try again. (Groq free tier = 30 requests/min.)"
+                                "Wait 60 seconds and try again. (Free tiers: Groq = 30 req/min, " +
+                                "Gemini = 15 req/min.) Tip: simple questions like 'hello' use 1 " +
+                                "request; multi-step tasks like 'open YouTube and search X' use " +
+                                "6-8 requests in a row."
                             )
                         }
                         throw e
                     }
-                    // Rate limited or timed out — wait 10s and retry.
+                    // v0.6.8: parse Retry-After from the error message.
+                    // AiService embeds it as "retry-after=Ns" on 429.
+                    // If present, wait that long + 2s buffer. Otherwise
+                    // fall back to a fixed 30s wait (was 10s — too short
+                    // for Groq's 60s rate limit window to fully reset).
+                    val retryAfterMatch = Regex("retry-after=(\\d+)s").find(msg)
+                    val waitMs = if (isRateLimit && retryAfterMatch != null) {
+                        val secs = retryAfterMatch.groupValues[1].toLong()
+                        (secs + 2) * 1000L  // provider-specified wait + 2s buffer
+                    } else if (isRateLimit) {
+                        30_000L  // no Retry-After header — wait 30s
+                    } else {
+                        10_000L  // timeout — wait 10s
+                    }
                     val waitReason = if (isRateLimit) "rate limit" else "timeout"
-                    Timber.w("%s on attempt %d — waiting 10s and retrying", waitReason, streamAttempts)
-                    onStatus?.invoke("Hit $waitReason — waiting 10s and retrying (attempt $streamAttempts/3)...")
-                    kotlinx.coroutines.delay(10_000L)
+                    val waitSec = waitMs / 1000
+                    Timber.w("%s on attempt %d — waiting %ds and retrying", waitReason, streamAttempts, waitSec)
+                    onStatus?.invoke("Hit $waitReason — waiting ${waitSec}s and retrying (attempt $streamAttempts/3)...")
+                    kotlinx.coroutines.delay(waitMs)
                     // Clear partial state before retrying.
                     textBuilder.clear()
                     toolCallAccumulator.clear()
@@ -221,7 +238,7 @@ class AgentRuntime(
                 // Groq's 30 req/min free-tier limit. Without this, a
                 // 6-step UI chain can fire 6 requests in 5 seconds and
                 // trip the rate limiter on step 4 or 5.
-                kotlinx.coroutines.delay(800L)
+                kotlinx.coroutines.delay(2000L)
                 continue
             }
 
@@ -248,7 +265,7 @@ class AgentRuntime(
                 ))
                 _state.value = _state.value.copy(streamingText = "")
                 iteration++
-                kotlinx.coroutines.delay(800L)
+                kotlinx.coroutines.delay(2000L)
                 continue
             }
 
@@ -271,7 +288,7 @@ class AgentRuntime(
                     ))
                     _state.value = _state.value.copy(streamingText = "")
                     iteration++
-                    kotlinx.coroutines.delay(800L)
+                    kotlinx.coroutines.delay(2000L)
                     continue
                 }
                 Timber.w("Still blank after %d retries — returning default", blankRetries)
