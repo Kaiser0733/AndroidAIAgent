@@ -248,6 +248,75 @@ class AgentAccessibilityService : AccessibilityService() {
         else "ERROR: swipe gesture dispatch failed"
     }
 
+    /**
+     * v0.6.6: Submits the currently-focused input field. This is the
+     * correct way to "press Enter" on a search box after type_text.
+     *
+     * type_text uses ACTION_SET_TEXT which bypasses the keyboard, so
+     * the IME's "Search/Go/Submit" button never gets pressed. This
+     * tool fixes that by trying, in order:
+     *   1. AccessibilityNodeInfo.ACTION_IME_ENTER on the focused
+     *      EditText (Android 11+ / API 30+). This is the OS-level
+     *      way to trigger the IME action (search, go, done, etc.)
+     *      the app has set on the field.
+     *   2. performAction(ACTION_CLICK) on the focused EditText —
+     *      some apps bind submit to click.
+     *   3. Find any visible button labelled "Search", "Go", "Submit",
+     *      "Done", or "Enter" and tap it via tapText.
+     *
+     * Returns OK on the first strategy that succeeds.
+     */
+    fun pressEnter(): String {
+        val root = rootInActiveWindow ?: return "ERROR: no active window"
+
+        // Step 1+2: try IME enter and click on the focused EditText.
+        val focus = findFocusedEditText(root) ?: findFirstEditText(root)
+        if (focus != null) {
+            if (!focus.isFocused) focus.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+
+            // API 30+ has ACTION_IME_ENTER (id 0x10000 + 17 = 65553)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                try {
+                    val imeEnterAction = 65553 // AccessibilityNodeInfo.ACTION_IME_ENTER
+                    if (focus.performAction(imeEnterAction)) {
+                        return "OK press_enter (ACTION_IME_ENTER on focused field)"
+                    }
+                } catch (e: Exception) {
+                    Timber.w(e, "ACTION_IME_ENTER failed")
+                }
+            }
+
+            // Fallback: click on the EditText itself.
+            if (focus.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                return "OK press_enter (ACTION_CLICK on focused field)"
+            }
+        }
+
+        // Step 3: look for a submit button on screen.
+        val submitLabels = listOf("Search", "Go", "Submit", "Done", "Enter", "Send", "Next")
+        for (label in submitLabels) {
+            val matches = findAllMatchingNodes(root, label)
+            // Only consider clickable ones for submit
+            val clickables = matches.filter { it.node.isClickable || it.cls == "Button" || it.cls == "ImageButton" }
+            if (clickables.isNotEmpty()) {
+                // Rank: shortest label first, then clickable.
+                val chosen = clickables.sortedWith(
+                    compareBy({ it.label.length }, { if (it.node.isClickable) 0 else 1 })
+                ).first()
+                val b = chosen.bounds
+                var ok = chosen.node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                if (!ok) ok = dispatchTap(b.exactCenterX(), b.exactCenterY())
+                if (ok) {
+                    return "OK press_enter (tapped '${chosen.label}' button)"
+                }
+            }
+        }
+
+        return "ERROR: could not submit. The focused field has no IME action, and no " +
+            "Search/Go/Submit button was found on screen. Call read_screen to see what " +
+            "buttons are available, then tap_text on the right one."
+    }
+
     /** Presses the BACK hardware key via the global action. */
     fun goBack(): String {
         val ok = performGlobalAction(GLOBAL_ACTION_BACK)

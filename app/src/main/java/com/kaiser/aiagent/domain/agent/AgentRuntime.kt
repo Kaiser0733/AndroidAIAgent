@@ -66,9 +66,19 @@ class AgentRuntime(
     ): String {
         val toolDefs = toolRegistry.toJsonDefinitions()
         var iteration = 0
-        // v0.6.2: bumped from 5 → 8 to support multi-step UI automation
-        // (open_app → read_screen → tap_text → type_text → tap_text → read_screen → answer)
-        val maxIterations = 8
+        // v0.6.5: bumped from 8 → 10. The full UI chain is:
+        //   open_app(1) → read_screen(2) → tap_text(3) → wait_seconds(4)
+        //   → type_text(5) → tap_text(6) → wait_seconds(7) → read_screen(8)
+        //   → final text answer(9)
+        // With maxIterations=8 the agent hit the limit BEFORE it could
+        // emit the final text answer, causing a blank response.
+        val maxIterations = 10
+        var blankRetries = 0
+        // v0.6.5: track whether the last tool call was read_screen.
+        // Used to detect hallucination — if the model tries to give
+        // a final answer describing screen contents without having
+        // just called read_screen, we inject a reminder.
+        var lastToolWasReadScreen = false
 
         while (true) {
             if (iteration >= maxIterations) {
@@ -169,6 +179,9 @@ class AgentRuntime(
                         ToolResult(false, "", "Tool '${tc.function.name}' timed out after 30s.")
                     }
 
+                    // v0.6.5: track whether the last tool was read_screen.
+                    lastToolWasReadScreen = tc.function.name == "read_screen"
+
                     // v0.6.2: bumped from 800 → 1500 chars so the model
                     // can see more of read_screen output (which can list
                     // many UI elements).
@@ -195,6 +208,60 @@ class AgentRuntime(
                 // trip the rate limiter on step 4 or 5.
                 kotlinx.coroutines.delay(1500L)
                 continue
+            }
+
+            // v0.6.5: Anti-hallucination check. If the model is about to
+            // give a final text answer that describes screen contents
+            // (e.g. "I can see results like...") but the last tool was
+            // NOT read_screen, inject a reminder and retry. This stops
+            // the model from inventing results it never verified.
+            val looksLikeScreenDescription = responseText.contains("I can see") ||
+                responseText.contains("I see") ||
+                responseText.contains("results like") ||
+                responseText.contains("showing") ||
+                responseText.contains("found") && responseText.contains("BBS")
+            if (looksLikeScreenDescription && !lastToolWasReadScreen && blankRetries < 1) {
+                blankRetries++
+                Timber.w("Possible hallucination detected — model describing screen without read_screen. Retrying with reminder.")
+                messages.add(AiMessage(role = "assistant", content = responseText))
+                messages.add(AiMessage(
+                    role = "user",
+                    content = "STOP. You just described screen contents without calling read_screen first. " +
+                        "That is a hallucination — you cannot know what is on screen without reading it. " +
+                        "Call read_screen NOW, then give your final answer based ONLY on what it returns. " +
+                        "Do not invent results, video titles, or screen contents."
+                ))
+                _state.value = _state.value.copy(streamingText = "")
+                iteration++
+                kotlinx.coroutines.delay(1500L)
+                continue
+            }
+
+            // v0.6.5: blank response check. If the model returned empty
+            // text with no tool calls, retry once with a nudge. This
+            // fixes the "blank first message" bug where the model
+            // sometimes emits just whitespace on the first call of a
+            // fresh conversation.
+            if (responseText.isBlank()) {
+                if (blankRetries < 2) {
+                    blankRetries++
+                    Timber.w("Blank response on iteration %d — retrying with nudge (attempt %d)", iteration, blankRetries)
+                    messages.add(AiMessage(role = "assistant", content = ""))
+                    messages.add(AiMessage(
+                        role = "user",
+                        content = "Your previous response was empty. Please either:\n" +
+                            "1. Call the next tool to continue the task, OR\n" +
+                            "2. Answer the user's original question in plain English.\n" +
+                            "Do not return an empty response."
+                    ))
+                    _state.value = _state.value.copy(streamingText = "")
+                    iteration++
+                    kotlinx.coroutines.delay(1500L)
+                    continue
+                }
+                Timber.w("Still blank after %d retries — returning default", blankRetries)
+                return "I attempted your request but couldn't generate a final response. " +
+                    "Please try again — sometimes the AI model returns an empty response on the first try."
             }
 
             // No tool calls — final text response

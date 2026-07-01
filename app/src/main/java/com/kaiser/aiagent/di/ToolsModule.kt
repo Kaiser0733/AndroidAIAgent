@@ -6,6 +6,7 @@ import com.kaiser.aiagent.domain.tools.PermissionManager
 import com.kaiser.aiagent.domain.tools.ToolRegistry
 import com.kaiser.aiagent.tools.accessibility.GoBackTool
 import com.kaiser.aiagent.tools.accessibility.GoHomeTool
+import com.kaiser.aiagent.tools.accessibility.PressEnterTool
 import com.kaiser.aiagent.tools.accessibility.ReadScreenTool
 import com.kaiser.aiagent.tools.accessibility.ScrollTool
 import com.kaiser.aiagent.tools.accessibility.TapTextTool
@@ -32,14 +33,14 @@ import org.koin.core.context.GlobalContext
 import org.koin.dsl.module
 
 /**
- * v0.6.4 registered tools (22 total):
- *   SAFE (20):
+ * v0.6.6 registered tools (23 total):
+ *   SAFE (21):
  *     - get_time, app_info, device_info
  *     - list_storage_roots, list_files, search_files, file_info,
  *       read_text_file, search_memory
  *     - open_app
- *     - read_screen, tap_text, type_text, scroll, go_back, go_home
- *     - wait_seconds (NEW v0.6.4)
+ *     - read_screen, tap_text, type_text, scroll, go_back, go_home,
+ *       wait_seconds, press_enter (NEW v0.6.6)
  *   CONFIRMATION_REQUIRED (2):
  *     - create_folder, create_text_file
  *   BLOCKED (4):
@@ -80,6 +81,8 @@ val toolsModule = module {
     single { GoHomeTool() }
     // v0.6.4: explicit wait tool
     single { WaitSecondsTool() }
+    // v0.6.6: submit-focused-input tool
+    single { PressEnterTool() }
 }
 
 /**
@@ -112,7 +115,8 @@ fun registerAllTools(registry: ToolRegistry) {
         koin.get<ScrollTool>(),
         koin.get<GoBackTool>(),
         koin.get<GoHomeTool>(),
-        koin.get<WaitSecondsTool>()
+        koin.get<WaitSecondsTool>(),
+        koin.get<PressEnterTool>()
     )
     for (tool in tools) {
         registry.register(tool)
