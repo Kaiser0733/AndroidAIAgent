@@ -93,41 +93,55 @@ class AgentRuntime(
 
             // v0.6.3: auto-retry on 429 rate limit. Groq's free tier
             // allows 30 req/min — a multi-step UI chain can hit this
-            // mid-turn. Instead of failing the whole turn, sleep 20s
+            // mid-turn. Instead of failing the whole turn, sleep 10s
             // and retry the same iteration (up to 2 retries).
+            // v0.6.7: reduced from 20s×3 to 10s×2 — the old 60s wait
+            // was too long and made the agent look frozen.
             var streamAttempts = 0
             var streamed = false
             while (!streamed && streamAttempts < 3) {
                 streamAttempts++
                 try {
-                    repository.streamChatWithTools(messages, toolDefs, onStatus).collect { event ->
-                        when (event) {
-                            is StreamEvent.Text -> {
-                                textBuilder.append(event.token)
-                                _state.value = _state.value.copy(streamingText = textBuilder.toString())
-                                onDelta(event.token)
-                            }
-                            is StreamEvent.ToolCallChunk -> {
-                                val acc = toolCallAccumulator.getOrPut(event.index) { ToolCallAccum() }
-                                if (event.id != null) acc.id = event.id
-                                if (event.name != null) acc.name = event.name
-                                acc.arguments.append(event.arguments)
-                            }
-                            is StreamEvent.Done -> {
-                                Timber.i("Stream done: finishReason=%s", event.finishReason)
-                            }
-                            is StreamEvent.Error -> {
-                                throw event.error
+                    // v0.6.7: hard 2-minute watchdog around the stream.
+                    // Even if the read timeout fails to fire (e.g. the
+                    // provider sends keepalive bytes but no real data),
+                    // this guarantees the iteration can't hang forever.
+                    kotlinx.coroutines.withTimeoutOrNull(120_000L) {
+                        repository.streamChatWithTools(messages, toolDefs, onStatus).collect { event ->
+                            when (event) {
+                                is StreamEvent.Text -> {
+                                    textBuilder.append(event.token)
+                                    _state.value = _state.value.copy(streamingText = textBuilder.toString())
+                                    onDelta(event.token)
+                                }
+                                is StreamEvent.ToolCallChunk -> {
+                                    val acc = toolCallAccumulator.getOrPut(event.index) { ToolCallAccum() }
+                                    if (event.id != null) acc.id = event.id
+                                    if (event.name != null) acc.name = event.name
+                                    acc.arguments.append(event.arguments)
+                                }
+                                is StreamEvent.Done -> {
+                                    Timber.i("Stream done: finishReason=%s", event.finishReason)
+                                }
+                                is StreamEvent.Error -> {
+                                    throw event.error
+                                }
                             }
                         }
+                    } ?: run {
+                        // withTimeoutOrNull returned null → timed out
+                        throw AiException("Stream timed out after 120 seconds with no data. " +
+                            "The AI provider may be overloaded. Try again.")
                     }
                     streamed = true
                 } catch (e: Throwable) {
                     val msg = (e.message ?: "").lowercase()
                     val isRateLimit = msg.contains("429") || msg.contains("rate limit")
-                    if (!isRateLimit || streamAttempts >= 3) {
-                        // Surface a friendlier message for 429 so the user
-                        // knows to wait rather than think the app is broken.
+                    val isTimeout = msg.contains("timed out") || msg.contains("sockettimeout")
+                    if (!isRateLimit && !isTimeout) {
+                        throw e
+                    }
+                    if (streamAttempts >= 3) {
                         if (isRateLimit) {
                             throw AiException(
                                 "Rate limited by the AI provider after $streamAttempts attempts. " +
@@ -136,10 +150,11 @@ class AgentRuntime(
                         }
                         throw e
                     }
-                    // Rate limited — wait 20s and retry the SAME iteration.
-                    Timber.w("429 rate limit on attempt %d — waiting 20s and retrying", streamAttempts)
-                    onStatus?.invoke("Rate limited — waiting 20s and retrying (attempt $streamAttempts/3)...")
-                    kotlinx.coroutines.delay(20_000L)
+                    // Rate limited or timed out — wait 10s and retry.
+                    val waitReason = if (isRateLimit) "rate limit" else "timeout"
+                    Timber.w("%s on attempt %d — waiting 10s and retrying", waitReason, streamAttempts)
+                    onStatus?.invoke("Hit $waitReason — waiting 10s and retrying (attempt $streamAttempts/3)...")
+                    kotlinx.coroutines.delay(10_000L)
                     // Clear partial state before retrying.
                     textBuilder.clear()
                     toolCallAccumulator.clear()
@@ -206,7 +221,7 @@ class AgentRuntime(
                 // Groq's 30 req/min free-tier limit. Without this, a
                 // 6-step UI chain can fire 6 requests in 5 seconds and
                 // trip the rate limiter on step 4 or 5.
-                kotlinx.coroutines.delay(1500L)
+                kotlinx.coroutines.delay(800L)
                 continue
             }
 
@@ -233,7 +248,7 @@ class AgentRuntime(
                 ))
                 _state.value = _state.value.copy(streamingText = "")
                 iteration++
-                kotlinx.coroutines.delay(1500L)
+                kotlinx.coroutines.delay(800L)
                 continue
             }
 
@@ -256,7 +271,7 @@ class AgentRuntime(
                     ))
                     _state.value = _state.value.copy(streamingText = "")
                     iteration++
-                    kotlinx.coroutines.delay(1500L)
+                    kotlinx.coroutines.delay(800L)
                     continue
                 }
                 Timber.w("Still blank after %d retries — returning default", blankRetries)
