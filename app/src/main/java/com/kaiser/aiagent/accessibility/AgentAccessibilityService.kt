@@ -336,6 +336,206 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     // ----------------------------------------------------------------
+    // v0.7: YouTube result parser
+    // ----------------------------------------------------------------
+
+    /**
+     * v0.7: Parses the current screen into a list of YouTube search
+     * results. Walks the accessibility tree looking for clickable
+     * containers that look like video results (have ≥2 text children,
+     * at least one containing "views" or "ago" or "subscribers").
+     *
+     * Returns up to 10 results. Each result includes the container's
+     * screen bounds so youtube_play can tap by exact coordinates.
+     *
+     * Returns empty list if no results found (e.g. still loading,
+     * YouTube redesigned, or not on search results page).
+     */
+    fun parseYouTubeResults(): List<com.kaiser.aiagent.scripts.YouTubeResult> {
+        val root = rootInActiveWindow ?: return emptyList()
+        val results = mutableListOf<com.kaiser.aiagent.scripts.YouTubeResult>()
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.addLast(root)
+
+        while (queue.isNotEmpty() && results.size < 10) {
+            val node = queue.removeFirst()
+
+            // Collect all text descendants of this node.
+            val texts = mutableListOf<String>()
+            collectTexts(node, texts)
+
+            // Heuristic: is this a search result container?
+            val isClickable = node.isClickable
+            val hasTexts = texts.size >= 2
+            val hasMeta = texts.any { t ->
+                t.contains("views", ignoreCase = true) ||
+                t.contains("ago", ignoreCase = true) ||
+                t.contains("subscribers", ignoreCase = true) ||
+                t.contains("watched", ignoreCase = true)
+            }
+            // Filter out tiny nodes (icons, buttons, etc.)
+            val b = android.graphics.Rect()
+            node.getBoundsInScreen(b)
+            val reasonableSize = b.width() > 300 && b.height() > 100
+
+            if (isClickable && hasTexts && hasMeta && reasonableSize) {
+                val result = parseResultContainer(node, texts, results.size, b)
+                if (result != null) {
+                    results.add(result)
+                }
+            }
+
+            // Walk children regardless
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.addLast(it) }
+            }
+        }
+        return results
+    }
+
+    /** Recursively collects all non-blank text from a node and its descendants. */
+    private fun collectTexts(node: AccessibilityNodeInfo, out: MutableList<String>) {
+        val t = node.text?.toString()?.takeIf { it.isNotBlank() }
+        if (t != null) out.add(t)
+        val d = node.contentDescription?.toString()?.takeIf { it.isNotBlank() }
+        if (d != null && d != t) out.add(d)
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { collectTexts(it, out) }
+        }
+    }
+
+    /**
+     * Parses a single result container into a [YouTubeResult].
+     * Heuristics:
+     *  - Title = first text that doesn't contain meta keywords
+     *  - Meta = text containing "views" or "ago"
+     *  - Channel = remaining non-meta text
+     */
+    private fun parseResultContainer(
+        node: AccessibilityNodeInfo,
+        texts: List<String>,
+        index: Int,
+        bounds: android.graphics.Rect
+    ): com.kaiser.aiagent.scripts.YouTubeResult? {
+        val metaKeywords = listOf("views", "ago", "subscribers", "watched", "•")
+        var title = ""
+        var meta = ""
+        var channel = ""
+
+        for (t in texts) {
+            val isMeta = metaKeywords.any { kw -> t.contains(kw, ignoreCase = true) }
+            if (isMeta && meta.isEmpty()) {
+                meta = t
+            } else if (title.isEmpty()) {
+                title = t
+            } else if (channel.isEmpty()) {
+                channel = t
+            }
+        }
+
+        if (title.isEmpty()) return null
+
+        // Parse views and uploaded from meta.
+        // Typical: "Cocomelon • 80M views • 1 year ago"
+        // or: "80M views • 1 year ago"  (channel separate)
+        val views = extractPattern(meta, Regex("(\\d[\\d.]*[KMB]?\\s*views)", RegexOption.IGNORE_CASE)) ?: ""
+        val uploaded = extractPattern(meta, Regex("(\\d+\\s+(?:second|minute|hour|day|week|month|year)s?\\s+ago)", RegexOption.IGNORE_CASE)) ?: ""
+
+        // Channel: if meta starts with a name before •, extract it
+        if (channel.isEmpty()) {
+            val parts = meta.split("•").map { it.trim() }.filter { it.isNotEmpty() }
+            // Filter out views/ago parts
+            channel = parts.firstOrNull { p ->
+                !p.contains("views", ignoreCase = true) &&
+                !p.contains("ago", ignoreCase = true) &&
+                !p.contains("subscribers", ignoreCase = true)
+            } ?: ""
+        }
+
+        val isLive = title.contains("LIVE", ignoreCase = true) ||
+            meta.contains("LIVE", ignoreCase = true) ||
+            texts.any { it.contains("LIVE", ignoreCase = true) }
+        val isPlaylist = texts.any {
+            it.contains("playlist", ignoreCase = true) ||
+            it.matches(Regex(".*\\d+\\s+videos.*", RegexOption.IGNORE_CASE))
+        }
+
+        return com.kaiser.aiagent.scripts.YouTubeResult(
+            index = index,
+            title = title.take(100),
+            channel = channel.take(60),
+            views = views.trim(),
+            uploaded = uploaded.trim(),
+            rawMeta = meta.take(120),
+            bounds = bounds,
+            isLive = isLive,
+            isPlaylist = isPlaylist
+        )
+    }
+
+    private fun extractPattern(text: String, regex: Regex): String? {
+        val match = regex.find(text)
+        return match?.value
+    }
+
+    // ----------------------------------------------------------------
+    // v0.7: Screen polling (for slow internet)
+    // ----------------------------------------------------------------
+
+    /**
+     * v0.7: Polls the screen until [condition] returns true, or until
+     * [timeoutMs] elapses. Used by scripts to wait for network-dependent
+     * UI changes (results loading, video page opening) instead of fixed
+     * sleeps.
+     *
+     * Returns true if the condition was met, false if timed out.
+     */
+    fun pollForCondition(
+        timeoutMs: Long,
+        pollIntervalMs: Long = 500,
+        condition: () -> Boolean
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (condition()) return true
+            try { Thread.sleep(pollIntervalMs) } catch (e: InterruptedException) { return false }
+        }
+        return false
+    }
+
+    /** Returns the package name of the current active window, or null. */
+    fun activeWindowPackage(): String? {
+        return rootInActiveWindow?.packageName?.toString()
+    }
+
+    /** Returns the count of interactive elements on screen (for detecting loaded content). */
+    fun interactiveElementCount(): Int {
+        val root = rootInActiveWindow ?: return 0
+        var count = 0
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.addLast(root)
+        while (queue.isNotEmpty() && count < 500) {
+            val node = queue.removeFirst()
+            if (node.isClickable || node.isFocusable) count++
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.addLast(it) }
+            }
+        }
+        return count
+    }
+
+    /**
+     * v0.7: Public wrapper for dispatchGesture. The parent class's
+     * dispatchGesture is protected, but scripts (YouTubePlayTool) need
+     * to tap by exact coordinates. This exposes it safely.
+     */
+    fun dispatchGesturePublic(gesture: android.accessibilityservice.GestureDescription): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            dispatchGesture(gesture, null, null)
+        } else false
+    }
+
+    // ----------------------------------------------------------------
     // Internal helpers
     // ----------------------------------------------------------------
 

@@ -57,4 +57,20 @@ object AgentAccessibilityController {
             "ERROR: $action failed — ${t.message ?: t.javaClass.simpleName}"
         }
     }
+
+    /**
+     * v0.7: Runs [block] on the live service instance with a generic
+     * return type (not just String). Used by YouTube scripts that need
+     * to return structured data (lists of results, etc.).
+     *
+     * Returns null if the service is not running or the block throws.
+     */
+    fun <T> runTyped(action: String, block: (AgentAccessibilityService) -> T): T? {
+        val svc = AgentAccessibilityService.instance ?: return null
+        return try {
+            block(svc)
+        } catch (t: Throwable) {
+            null
+        }
+    }
 }

@@ -4,14 +4,6 @@ import com.kaiser.aiagent.data.storage.StorageRepository
 import com.kaiser.aiagent.domain.tools.AgentTool
 import com.kaiser.aiagent.domain.tools.PermissionManager
 import com.kaiser.aiagent.domain.tools.ToolRegistry
-import com.kaiser.aiagent.tools.accessibility.GoBackTool
-import com.kaiser.aiagent.tools.accessibility.GoHomeTool
-import com.kaiser.aiagent.tools.accessibility.PressEnterTool
-import com.kaiser.aiagent.tools.accessibility.ReadScreenTool
-import com.kaiser.aiagent.tools.accessibility.ScrollTool
-import com.kaiser.aiagent.tools.accessibility.TapTextTool
-import com.kaiser.aiagent.tools.accessibility.TypeTextTool
-import com.kaiser.aiagent.tools.accessibility.WaitSecondsTool
 import com.kaiser.aiagent.tools.blocked.AppControlTool
 import com.kaiser.aiagent.tools.blocked.DeleteFileTool
 import com.kaiser.aiagent.tools.blocked.MoveFileTool
@@ -27,24 +19,37 @@ import com.kaiser.aiagent.tools.file.ListStorageRootsTool
 import com.kaiser.aiagent.tools.file.ReadTextFileTool
 import com.kaiser.aiagent.tools.file.SearchFilesTool
 import com.kaiser.aiagent.tools.memory.SearchMemoryTool
+import com.kaiser.aiagent.tools.scripts.YouTubePlayTool
+import com.kaiser.aiagent.tools.scripts.YouTubeScrollResultsTool
+import com.kaiser.aiagent.tools.scripts.YouTubeSearchTool
 import com.kaiser.aiagent.tools.system.OpenAppTool
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.GlobalContext
 import org.koin.dsl.module
 
 /**
- * v0.6.6 registered tools (23 total):
- *   SAFE (21):
+ * v0.7 registered tools (17 total):
+ *   SAFE (15):
  *     - get_time, app_info, device_info
  *     - list_storage_roots, list_files, search_files, file_info,
  *       read_text_file, search_memory
  *     - open_app
- *     - read_screen, tap_text, type_text, scroll, go_back, go_home,
- *       wait_seconds, press_enter (NEW v0.6.6)
+ *     - youtube_search, youtube_play, youtube_scroll_results (NEW v0.7)
  *   CONFIRMATION_REQUIRED (2):
  *     - create_folder, create_text_file
  *   BLOCKED (4):
  *     - delete_file, move_file, rename_file, app_control
+ *
+ * v0.7 CHANGE: The 8 raw accessibility tools (read_screen, tap_text,
+ * type_text, scroll, go_back, go_home, wait_seconds, press_enter)
+ * have been REMOVED from the AI-visible catalog. They still exist as
+ * methods on AgentAccessibilityService — the YouTube scripts call them
+ * internally — but the AI can no longer drive individual pixels.
+ *
+ * This is the "script-first" architecture: AI picks the intent,
+ * scripts handle execution deterministically. Result: 2-3 AI calls
+ * per task instead of 7-8, no rate-limit issues, no hallucinated
+ * results, no wrong-element taps.
  */
 val toolsModule = module {
     single { StorageRepository(androidContext()) }
@@ -70,19 +75,12 @@ val toolsModule = module {
     single { MoveFileTool() }
     single { RenameFileTool() }
     single { AppControlTool() }
-    // v0.6: System tools
+    // System tools
     single { OpenAppTool(androidContext()) }
-    // v0.6.2: Accessibility tools (require AgentAccessibilityService running)
-    single { ReadScreenTool() }
-    single { TapTextTool() }
-    single { TypeTextTool() }
-    single { ScrollTool() }
-    single { GoBackTool() }
-    single { GoHomeTool() }
-    // v0.6.4: explicit wait tool
-    single { WaitSecondsTool() }
-    // v0.6.6: submit-focused-input tool
-    single { PressEnterTool() }
+    // v0.7: YouTube script tools
+    single { YouTubeSearchTool(androidContext()) }
+    single { YouTubePlayTool() }
+    single { YouTubeScrollResultsTool() }
 }
 
 /**
@@ -109,14 +107,9 @@ fun registerAllTools(registry: ToolRegistry) {
         koin.get<RenameFileTool>(),
         koin.get<AppControlTool>(),
         koin.get<OpenAppTool>(),
-        koin.get<ReadScreenTool>(),
-        koin.get<TapTextTool>(),
-        koin.get<TypeTextTool>(),
-        koin.get<ScrollTool>(),
-        koin.get<GoBackTool>(),
-        koin.get<GoHomeTool>(),
-        koin.get<WaitSecondsTool>(),
-        koin.get<PressEnterTool>()
+        koin.get<YouTubeSearchTool>(),
+        koin.get<YouTubePlayTool>(),
+        koin.get<YouTubeScrollResultsTool>()
     )
     for (tool in tools) {
         registry.register(tool)
