@@ -214,11 +214,14 @@ class AgentRuntime(
                     // v0.6.5: track whether the last tool was read_screen.
                     lastToolWasReadScreen = tc.function.name == "read_screen"
 
-                    // v0.6.2: bumped from 800 → 1500 chars so the model
-                    // can see more of read_screen output (which can list
-                    // many UI elements).
-                    val truncatedData = if (result.data.length > 1500)
-                        result.data.take(1500) + "..." else result.data
+                    // v0.6.9: smarter truncation. read_screen can return
+                    // 2000+ chars (many UI elements); other tools are
+                    // usually small. Cap read_screen at 1000 chars,
+                    // other tools at 1500. This keeps the request size
+                    // down so we don't blow Groq's 6000 tokens/min limit.
+                    val cap = if (tc.function.name == "read_screen") 1000 else 1500
+                    val truncatedData = if (result.data.length > cap)
+                        result.data.take(cap) + "..." else result.data
 
                     messages.add(AiMessage(
                         role = "tool",
@@ -239,6 +242,20 @@ class AgentRuntime(
                 // 6-step UI chain can fire 6 requests in 5 seconds and
                 // trip the rate limiter on step 4 or 5.
                 kotlinx.coroutines.delay(2000L)
+
+                // v0.6.9: history compaction. Each iteration re-sends
+                // the full message history to Groq, and Groq's free
+                // tier has a 6000 tokens/min limit. By iteration 4-5
+                // the history can be 3000+ tokens (system prompt +
+                // accumulated tool results), so 4 calls = 12000+ tokens
+                // → over the limit.
+                //
+                // Fix: after iteration 3, compact old tool results to
+                // a 1-line summary. Keeps the history small so later
+                // iterations stay well under the token limit.
+                if (iteration >= 3) {
+                    compactHistory(messages)
+                }
                 continue
             }
 
@@ -307,6 +324,39 @@ class AgentRuntime(
             lastToolResult = result,
             toolCallsThisTurn = _state.value.toolCallsThisTurn + 1
         )
+    }
+
+    /**
+     * v0.6.9: Shrinks old tool-result messages in [messages] to a
+     * 1-line summary. Keeps only the LAST tool result intact (the
+     * model needs it for the current decision). Older tool results
+     * get replaced with "[tool <name>: <status>, 1-line summary]".
+     *
+     * This dramatically reduces token count on later iterations of
+     * a multi-step UI chain, which is the main cause of Groq's
+     * 6000 tokens/min free-tier limit being hit mid-turn.
+     *
+     * The system message, user message, and the most recent assistant
+     * + tool messages are always preserved unchanged.
+     */
+    private fun compactHistory(messages: MutableList<AiMessage>) {
+        // Find indices of tool messages, keeping the last 2 intact.
+        val toolIndices = messages.indices.filter { messages[it].role == "tool" }
+        if (toolIndices.size <= 2) return  // nothing to compact
+
+        val toCompact = toolIndices.dropLast(2)  // keep last 2 verbatim
+        for (i in toCompact) {
+            val msg = messages[i]
+            val original = msg.content ?: ""
+            if (original.length <= 80) continue  // already small
+            // Build a 1-line summary: tool name + first 60 chars of result.
+            val toolName = msg.name ?: "tool"
+            val summary = original.take(60).replace("\n", " ")
+            messages[i] = msg.copy(
+                content = "[compacted $toolName: $summary...]"
+            )
+        }
+        Timber.i("Compacted %d old tool results to summaries", toCompact.size)
     }
 
     fun resetTurnCounters() { _state.value = AgentState.IDLE }
