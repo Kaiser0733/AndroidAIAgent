@@ -94,18 +94,71 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Taps the first node whose text or content description contains
-     * [text] (case-insensitive substring match).
+     * v0.6.3: Taps an element matching [text] with smart disambiguation.
+     *
+     * Algorithm:
+     *  1. Collect ALL matching nodes (exact + substring, case-insensitive).
+     *  2. Rank: exact-match first, then shorter label (so "Search" beats
+     *     "Voice search"), then clickable preferred.
+     *  3. If [index] >= 0 → tap the i-th ranked match (0-based).
+     *  4. Else if exactly 1 match → tap it.
+     *  5. Else if the top-2 matches have DIFFERENT labels → tap #0
+     *     (auto-disambiguate by label specificity).
+     *  6. Else (top-2 have the same label) → return the list so the
+     *     model can re-call with index= to pick.
+     *
+     * This fixes the v0.6.2 bug where tap_text "Search" on YouTube
+     * matched "Voice search" first (BFS order) and opened the mic.
      */
-    fun tapText(text: String): String {
+    fun tapText(text: String, index: Int = -1): String {
         val root = rootInActiveWindow ?: return "ERROR: no active window"
-        val target = findNodeByText(root, text)
-            ?: return "ERROR: no element with text '$text' found on screen"
+        val matches = findAllMatchingNodes(root, text)
+        if (matches.isEmpty()) {
+            return "ERROR: no element with text '$text' found on screen. " +
+                "Call read_screen to see what labels are available."
+        }
+
+        // Rank: exact > shorter label > clickable.
+        val ranked = matches.sortedWith(
+            compareBy(
+                { if (it.exact) 0 else 1 },
+                { it.label.length },
+                { if (it.node.isClickable) 0 else 1 }
+            )
+        )
+
+        val chosen: Match = when {
+            index >= 0 && index < ranked.size -> ranked[index]
+            ranked.size == 1 -> ranked[0]
+            else -> {
+                val top = ranked[0]
+                val second = ranked[1]
+                // If the top-2 have the same label AND same exact-ness,
+                // we cannot safely auto-pick — return the list.
+                if (top.label.equals(second.label, ignoreCase = true) &&
+                    top.exact == second.exact
+                ) {
+                    return buildString {
+                        appendLine("AMBIGUOUS: ${ranked.size} elements match '$text'.")
+                        appendLine("Re-call tap_text with index= to pick one:")
+                        ranked.take(6).forEachIndexed { i, m ->
+                            val b = m.bounds
+                            appendLine("  index=$i  label='${m.label}'  class=${m.cls}  at=(${b.left},${b.top})")
+                        }
+                        if (ranked.size > 6) appendLine("  ... and ${ranked.size - 6} more")
+                    }.trimEnd()
+                } else {
+                    top
+                }
+            }
+        }
+
+        val node = chosen.node
         val b = android.graphics.Rect()
-        target.getBoundsInScreen(b)
-        var ok = target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        node.getBoundsInScreen(b)
+        var ok = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
         if (!ok) {
-            var ancestor: AccessibilityNodeInfo? = target.parent
+            var ancestor: AccessibilityNodeInfo? = node.parent
             while (ancestor != null && !ancestor.isClickable) {
                 ancestor = ancestor.parent
             }
@@ -117,9 +170,9 @@ class AgentAccessibilityService : AccessibilityService() {
             ok = dispatchTap(b.exactCenterX(), b.exactCenterY())
         }
         return if (ok) {
-            "OK tapped '$text' at (${b.exactCenterX().toInt()},${b.exactCenterY().toInt()})"
+            "OK tapped '${chosen.label}' at (${b.exactCenterX().toInt()},${b.exactCenterY().toInt()})"
         } else {
-            "ERROR: could not tap '$text' (node found but click failed)"
+            "ERROR: could not tap '${chosen.label}' (node found but click failed)"
         }
     }
 
@@ -187,37 +240,59 @@ class AgentAccessibilityService : AccessibilityService() {
     // Internal helpers
     // ----------------------------------------------------------------
 
-    private fun findNodeByText(root: AccessibilityNodeInfo, text: String): AccessibilityNodeInfo? {
+    /**
+     * v0.6.3: Walks the tree and collects EVERY node whose text or
+     * content description matches [text] (case-insensitive substring,
+     * plus a flag for exact equality). Used by tapText for smart
+     * disambiguation.
+     */
+    private fun findAllMatchingNodes(root: AccessibilityNodeInfo, text: String): List<Match> {
         val lower = text.lowercase()
+        val out = mutableListOf<Match>()
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.addLast(root)
-        var exactMatch: AccessibilityNodeInfo? = null
-        var partialMatch: AccessibilityNodeInfo? = null
         while (queue.isNotEmpty()) {
             val node = queue.removeFirst()
             val t = node.text?.toString()
             val d = node.contentDescription?.toString()
-            if (t != null && t.equals(text, ignoreCase = true)) {
-                exactMatch = node
-                break
-            }
-            if (d != null && d.equals(text, ignoreCase = true)) {
-                exactMatch = node
-                break
-            }
-            if (partialMatch == null) {
-                if ((t != null && t.lowercase().contains(lower)) ||
-                    (d != null && d.lowercase().contains(lower))
-                ) {
-                    partialMatch = node
+            val label = (t ?: d ?: "")
+            if (label.isBlank()) {
+                // No label on this node — still walk children.
+                for (i in 0 until node.childCount) {
+                    node.getChild(i)?.let { queue.addLast(it) }
                 }
+                continue
+            }
+            val isExact = label.equals(text, ignoreCase = true)
+            val isPartial = label.lowercase().contains(lower)
+            if (isExact || isPartial) {
+                val b = android.graphics.Rect()
+                node.getBoundsInScreen(b)
+                out.add(
+                    Match(
+                        node = node,
+                        label = label,
+                        cls = node.className?.toString()?.substringAfterLast('.') ?: "",
+                        bounds = b,
+                        exact = isExact
+                    )
+                )
             }
             for (i in 0 until node.childCount) {
                 node.getChild(i)?.let { queue.addLast(it) }
             }
         }
-        return exactMatch ?: partialMatch
+        return out
     }
+
+    /** v0.6.3 internal: a single matching node + metadata for ranking. */
+    private data class Match(
+        val node: AccessibilityNodeInfo,
+        val label: String,
+        val cls: String,
+        val bounds: android.graphics.Rect,
+        val exact: Boolean
+    )
 
     private fun findFocusedEditText(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val queue = ArrayDeque<AccessibilityNodeInfo>()

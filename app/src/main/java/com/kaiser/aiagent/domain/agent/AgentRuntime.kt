@@ -81,25 +81,59 @@ class AgentRuntime(
             val textBuilder = StringBuilder()
             val toolCallAccumulator = mutableMapOf<Int, ToolCallAccum>()
 
-            repository.streamChatWithTools(messages, toolDefs, onStatus).collect { event ->
-                when (event) {
-                    is StreamEvent.Text -> {
-                        textBuilder.append(event.token)
-                        _state.value = _state.value.copy(streamingText = textBuilder.toString())
-                        onDelta(event.token)
+            // v0.6.3: auto-retry on 429 rate limit. Groq's free tier
+            // allows 30 req/min — a multi-step UI chain can hit this
+            // mid-turn. Instead of failing the whole turn, sleep 20s
+            // and retry the same iteration (up to 2 retries).
+            var streamAttempts = 0
+            var streamed = false
+            while (!streamed && streamAttempts < 3) {
+                streamAttempts++
+                try {
+                    repository.streamChatWithTools(messages, toolDefs, onStatus).collect { event ->
+                        when (event) {
+                            is StreamEvent.Text -> {
+                                textBuilder.append(event.token)
+                                _state.value = _state.value.copy(streamingText = textBuilder.toString())
+                                onDelta(event.token)
+                            }
+                            is StreamEvent.ToolCallChunk -> {
+                                val acc = toolCallAccumulator.getOrPut(event.index) { ToolCallAccum() }
+                                if (event.id != null) acc.id = event.id
+                                if (event.name != null) acc.name = event.name
+                                acc.arguments.append(event.arguments)
+                            }
+                            is StreamEvent.Done -> {
+                                Timber.i("Stream done: finishReason=%s", event.finishReason)
+                            }
+                            is StreamEvent.Error -> {
+                                throw event.error
+                            }
+                        }
                     }
-                    is StreamEvent.ToolCallChunk -> {
-                        val acc = toolCallAccumulator.getOrPut(event.index) { ToolCallAccum() }
-                        if (event.id != null) acc.id = event.id
-                        if (event.name != null) acc.name = event.name
-                        acc.arguments.append(event.arguments)
+                    streamed = true
+                } catch (e: Throwable) {
+                    val msg = (e.message ?: "").lowercase()
+                    val isRateLimit = msg.contains("429") || msg.contains("rate limit")
+                    if (!isRateLimit || streamAttempts >= 3) {
+                        // Surface a friendlier message for 429 so the user
+                        // knows to wait rather than think the app is broken.
+                        if (isRateLimit) {
+                            throw AiException(
+                                "Rate limited by the AI provider after $streamAttempts attempts. " +
+                                "Wait 30-60 seconds and try again. (Groq free tier = 30 requests/min.)"
+                            )
+                        }
+                        throw e
                     }
-                    is StreamEvent.Done -> {
-                        Timber.i("Stream done: finishReason=%s", event.finishReason)
-                    }
-                    is StreamEvent.Error -> {
-                        throw event.error
-                    }
+                    // Rate limited — wait 20s and retry the SAME iteration.
+                    Timber.w("429 rate limit on attempt %d — waiting 20s and retrying", streamAttempts)
+                    onStatus?.invoke("Rate limited — waiting 20s and retrying (attempt $streamAttempts/3)...")
+                    kotlinx.coroutines.delay(20_000L)
+                    // Clear partial state before retrying.
+                    textBuilder.clear()
+                    toolCallAccumulator.clear()
+                    _state.value = _state.value.copy(streamingText = "")
                 }
             }
 
@@ -155,6 +189,11 @@ class AgentRuntime(
 
                 iteration++
                 _state.value = _state.value.copy(streamingText = "")
+                // v0.6.3: small pause between tool iterations to ease
+                // Groq's 30 req/min free-tier limit. Without this, a
+                // 6-step UI chain can fire 6 requests in 5 seconds and
+                // trip the rate limiter on step 4 or 5.
+                kotlinx.coroutines.delay(1500L)
                 continue
             }
 

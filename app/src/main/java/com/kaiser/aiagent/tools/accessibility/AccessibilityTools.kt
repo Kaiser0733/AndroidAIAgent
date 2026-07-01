@@ -49,24 +49,37 @@ class ReadScreenTool : AgentTool {
 }
 
 /**
- * Taps the first on-screen element whose text or content description
- * matches [text] (case-insensitive substring match).
+ * v0.6.3: Taps an element matching text. Smart disambiguation:
+ *  - If multiple matches exist and they have DIFFERENT labels, auto-
+ *    picks the best one (exact match preferred, then shortest label
+ *    so "Search" beats "Voice search").
+ *  - If multiple matches share the SAME label, returns AMBIGUOUS with
+ *    a list — re-call with index= to pick.
+ *  - Pass index=0 to force the top-ranked match (skips ambiguity check).
  *
- * Example: tap_text "Search" — taps the YouTube search icon.
+ * Example: tap_text "Search" — taps the YouTube search icon (not Voice search).
  */
 class TapTextTool : AgentTool {
     override val name = "tap_text"
     override val description =
         "Taps an element on the current screen by matching its text. " +
-            "Case-insensitive substring match. Use after read_screen to find the " +
-            "exact label. Examples: tap the Search button, tap a video title."
-    override val argumentsSchema = """{"text":"<button text or label>"}"""
+            "Case-insensitive substring match. v0.6.3 smart ranking: exact " +
+            "match preferred, then shorter label (so 'Search' beats 'Voice " +
+            "search'), then clickable. If multiple matches share the same " +
+            "label, returns AMBIGUOUS — re-call with index= to pick. " +
+            "Use after read_screen to find the right label."
+    override val argumentsSchema = """{"text":"<button text>","index":"<optional 0-based>"}"""
     override val permissionLevel = ToolPermissionLevel.SAFE
 
     override fun parametersJsonSchema() = buildJsonObject {
         put("type", "object")
         put("properties", buildJsonObject {
             put("text", stringParam("Text on the element to tap (case-insensitive substring)"))
+            put("index", buildJsonObject {
+                put("type", "integer")
+                put("description", "Optional 0-based index to pick a specific match when multiple elements share the same label. Use when the previous call returned AMBIGUOUS.")
+                put("minimum", 0)
+            })
         })
         put("required", kotlinx.serialization.json.JsonArray(listOf(JsonPrimitive("text"))))
     }
@@ -77,9 +90,13 @@ class TapTextTool : AgentTool {
         } catch (e: Exception) { null }
         val text = (obj?.get("text") as? JsonPrimitive)?.content
             ?: return ToolResult(false, "", "Missing 'text' argument.")
-        val out = AgentAccessibilityController.run("tap_text") { svc -> svc.tapText(text) }
+        val index = (obj?.get("index") as? JsonPrimitive)?.content?.toIntOrNull() ?: -1
+        val out = AgentAccessibilityController.run("tap_text") { svc -> svc.tapText(text, index) }
+        // AMBIGUOUS is not a failure — it's informational. The model should
+        // re-call with index= based on the returned list.
+        val success = out.startsWith("OK") || out.startsWith("AMBIGUOUS")
         return ToolResult(
-            success = out.startsWith("OK"),
+            success = success,
             data = out,
             error = if (out.startsWith("ERROR")) out else null
         )
