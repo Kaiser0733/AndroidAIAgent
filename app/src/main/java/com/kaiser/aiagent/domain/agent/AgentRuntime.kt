@@ -48,9 +48,26 @@ class AgentRuntime(
         _state.value = AgentState(busy = true, streamingText = "")
 
         try {
-            val finalText = runLoop(messages, conversationId, onDelta, onStatus)
+            // v0.7.11: overall turn timeout. The per-iteration watchdog
+            // (30s) + retry loop could make a turn run for 7+ minutes.
+            // Cap the WHOLE turn at 120s. If it exceeds, return a clear
+            // error instead of leaving the user stuck "thinking".
+            val finalText = kotlinx.coroutines.withTimeoutOrNull(120_000L) {
+                runLoop(messages, conversationId, onDelta, onStatus)
+            } ?: run {
+                Timber.w("Overall turn timed out after 120s")
+                "The request took too long and was cancelled (120s limit). " +
+                    "The AI provider may be slow or overloaded. Try again, " +
+                    "or try a simpler request."
+            }
             _state.value = AgentState.IDLE
             onFinal(finalText)
+        } catch (t: kotlinx.coroutines.CancellationException) {
+            // v0.7.11: user tapped Stop — this is a normal cancellation,
+            // not an error. Don't re-throw; just clean up.
+            Timber.i("Agent turn cancelled by user")
+            _state.value = AgentState.IDLE
+            // Don't call onFinal — the UI's stop() already cleared busy.
         } catch (t: Throwable) {
             Timber.w(t, "Agent turn failed")
             _state.value = AgentState.IDLE.copy(lastError = t.message ?: t.javaClass.simpleName)
@@ -102,12 +119,10 @@ class AgentRuntime(
             while (!streamed && streamAttempts < 3) {
                 streamAttempts++
                 try {
-                    // v0.7.6: reduced watchdog from 120s to 45s. The 120s
-                    // watchdog was too long — combined with the 90s read
-                    // timeout, the agent could appear stuck for 2 minutes
-                    // before failing. 45s is enough for any real response;
-                    // if the stream hasn't completed by then, fail fast.
-                    kotlinx.coroutines.withTimeoutOrNull(45_000L) {
+                    // v0.7.11: reduced per-iteration watchdog from 45s to 30s.
+                    // Combined with the 120s overall turn timeout, this means
+                    // a single stuck iteration can't waste more than 30s.
+                    kotlinx.coroutines.withTimeoutOrNull(30_000L) {
                         repository.streamChatWithTools(messages, toolDefs, onStatus).collect { event ->
                             when (event) {
                                 is StreamEvent.Text -> {
@@ -131,7 +146,7 @@ class AgentRuntime(
                         }
                     } ?: run {
                         // withTimeoutOrNull returned null → timed out
-                        throw AiException("Stream timed out after 45 seconds with no data. " +
+                        throw AiException("Stream timed out after 30 seconds with no data. " +
                             "The AI provider may be overloaded. Try again.")
                     }
                     streamed = true

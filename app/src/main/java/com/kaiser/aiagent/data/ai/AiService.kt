@@ -2,8 +2,9 @@ package com.kaiser.aiagent.data.ai
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -67,21 +68,19 @@ class AiService {
      * wrong and we should fail fast. The AgentRuntime has a separate 45s
      * watchdog as a backstop.
      */
-    fun streamChat(config: AiConfig, request: AiRequest): Flow<StreamEvent> = flow {
+    fun streamChat(config: AiConfig, request: AiRequest): Flow<StreamEvent> = callbackFlow {
         val client = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)  // v0.7.6: explicit 15s connect timeout
-            .readTimeout(30, TimeUnit.SECONDS)     // v0.7.6: 30s read timeout (was 90s)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
             .build()
         val req = buildRequest(config, request.copy(stream = true))
-        val channel = Channel<StreamEvent>(Channel.BUFFERED)
-        var streamError: Throwable? = null
 
         val factory = EventSources.createFactory(client)
         val source = factory.newEventSource(req, object : EventSourceListener() {
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
                 if (data == "[DONE]") {
                     eventSource.cancel()
-                    channel.trySend(StreamEvent.Done(null))
+                    trySend(StreamEvent.Done(null))
                     channel.close()
                     return
                 }
@@ -90,15 +89,13 @@ class AiService {
                     val choice = parsed.choices.firstOrNull() ?: return
                     val delta = choice.delta ?: return
 
-                    // Text content
                     if (!delta.content.isNullOrEmpty()) {
-                        channel.trySend(StreamEvent.Text(delta.content))
+                        trySend(StreamEvent.Text(delta.content))
                     }
 
-                    // Tool call deltas (v0.6)
                     if (!delta.toolCalls.isNullOrEmpty()) {
                         for (tc in delta.toolCalls) {
-                            channel.trySend(StreamEvent.ToolCallChunk(
+                            trySend(StreamEvent.ToolCallChunk(
                                 index = tc.index,
                                 id = tc.id,
                                 name = tc.function?.name,
@@ -107,9 +104,8 @@ class AiService {
                         }
                     }
 
-                    // Finish reason
                     if (choice.finishReason != null) {
-                        channel.trySend(StreamEvent.Done(choice.finishReason))
+                        trySend(StreamEvent.Done(choice.finishReason))
                         eventSource.cancel()
                         channel.close()
                     }
@@ -120,17 +116,11 @@ class AiService {
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 val code = response?.code
-                // v0.6.8: capture Retry-After header on 429 so the
-                // agent runtime knows exactly how long to wait before
-                // retrying. Groq sends this as seconds; some providers
-                // send it as an HTTP-date. We handle both.
                 val retryAfterRaw = response?.header("Retry-After")
                 val retryAfterSecs = retryAfterRaw?.toIntOrNull()
                 val body = try { response?.body?.string() } catch(e:Exception) { null }
                 response?.close()
                 val detail = parseErrorMessage(body.orEmpty()) ?: body?.take(300) ?: t?.message ?: "unknown"
-                // Embed retry-after in the error message so the runtime
-                // can parse it out and wait the right amount of time.
                 val msg = if (code == 429 && retryAfterSecs != null) {
                     "HTTP 429 (retry-after=${retryAfterSecs}s): $detail"
                 } else if (code == 429) {
@@ -138,8 +128,7 @@ class AiService {
                 } else {
                     "HTTP $code: $detail"
                 }
-                streamError = AiException(msg, t)
-                channel.close()
+                channel.close(AiException(msg, t))
             }
 
             override fun onClosed(eventSource: EventSource) {
@@ -147,16 +136,14 @@ class AiService {
             }
         })
 
-        for (event in channel) {
-            if (event is StreamEvent.Error) {
-                streamError = event.error
-                break
-            }
-            emit(event)
+        // v0.7.11: CRITICAL FIX — awaitClose ensures the EventSource is
+        // cancelled when the flow is cancelled (e.g. when the user taps
+        // Stop). Without this, the OkHttp connection leaks and the
+        // channel hangs forever — the agent stays "thinking" even after
+        // the user tries to cancel.
+        awaitClose {
+            try { source.cancel() } catch (e: Exception) { }
         }
-
-        try { source.cancel() } catch (e: Exception) { }
-        streamError?.let { throw it }
     }.flowOn(Dispatchers.IO)
 
     private fun buildRequest(config: AiConfig, request: AiRequest): Request {

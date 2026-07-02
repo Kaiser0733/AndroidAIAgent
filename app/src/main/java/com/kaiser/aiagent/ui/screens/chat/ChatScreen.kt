@@ -24,6 +24,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -177,7 +178,8 @@ fun ChatScreen(
                         input = ""
                     }
                 },
-                enabled = !state.busy
+                onStop = { viewModel.stop() },
+                busy = state.busy
             )
         }
     }
@@ -353,7 +355,8 @@ private fun ChatInputBar(
     text: String,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
-    enabled: Boolean
+    onStop: () -> Unit,
+    busy: Boolean
 ) {
     Row(
         modifier = Modifier
@@ -369,13 +372,32 @@ private fun ChatInputBar(
             placeholder = { Text("Message…") },
             maxLines = 5,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            enabled = enabled
+            // v0.7.11: keep input ENABLED when busy so the user can
+            // type the next message while the agent is thinking.
+            enabled = true
         )
-        IconButton(
-            onClick = onSend,
-            enabled = enabled && text.isNotBlank()
-        ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+        if (busy) {
+            // v0.7.11: Stop button replaces Send when busy.
+            IconButton(
+                onClick = onStop,
+                modifier = Modifier.background(
+                    MaterialTheme.colorScheme.errorContainer,
+                    androidx.compose.foundation.shape.CircleShape
+                )
+            ) {
+                Icon(
+                    Icons.Filled.Stop,
+                    contentDescription = "Stop",
+                    tint = MaterialTheme.colorScheme.onErrorContainer
+                )
+            }
+        } else {
+            IconButton(
+                onClick = onSend,
+                enabled = text.isNotBlank()
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
+            }
         }
     }
 }
