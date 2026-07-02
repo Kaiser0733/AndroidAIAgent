@@ -352,23 +352,31 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * v0.7.3: Finds the first autocomplete suggestion on YouTube's
+     * v0.7.4: Finds the first autocomplete suggestion on YouTube's
      * search panel. VERY STRICT filtering to avoid tapping the mic
-     * or voice search button (the v0.7.2 bug).
+     * or voice search button.
      *
-     * A suggestion row must satisfy ALL of:
-     *  - bounds.top > 150px (below the search bar, which is at Y 30-60)
-     *  - bounds.height() in 80..220 (suggestion rows are narrow;
-     *    the search bar + mic row is taller)
-     *  - bounds.width() > 500 (full-width row, not a small icon)
+     * CRITICAL TABLET FIX (v0.7.4):
+     * On the Samsung Galaxy Tab A9+ (1920×1200 screen), YouTube shows
+     * a FLOATING mic button at the BOTTOM of the screen (Y ~930 in
+     * portrait, ~700 in landscape). The old filter (b.top < 60% of
+     * screen) let the mic through because 930 < 1152.
+     *
+     * Autocomplete suggestions are in the TOP ~20% of screen, right
+     * below the search bar (which is at Y 30-60). The mic is in the
+     * BOTTOM ~50%. So the filter is now:
+     *  - bounds.top in 150..(screenHeight * 0.25)  ← TOP QUARTER ONLY
+     *  - bounds.height() in 80..220
+     *  - bounds.width() > 500
      *  - has text content
      *  - text does NOT contain "voice", "mic", "speech", "search youtube"
-     *  - text does NOT exactly equal the typed query (that's the search
-     *    bar itself echoing back)
-     *  - is in the upper 60% of screen (suggestions are right below bar)
+     *  - text does NOT exactly equal the typed query
      */
     private fun findFirstAutocompleteSuggestion(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
         val screenHeight = resources.displayMetrics.heightPixels
+        val screenWidth = resources.displayMetrics.widthPixels
+        // Suggestions are in the top 25% of the screen, below the search bar.
+        val maxSuggestionTop = (screenHeight * 0.25).toInt()
         val candidates = mutableListOf<Pair<AccessibilityNodeInfo, android.graphics.Rect>>()
 
         val queue = ArrayDeque<AccessibilityNodeInfo>()
@@ -382,20 +390,21 @@ class AgentAccessibilityService : AccessibilityService() {
                 node.getBoundsInScreen(b)
 
                 val isBelowSearchBar = b.top > 150
+                val isAboveMicZone = b.top < maxSuggestionTop
                 val isNarrowRow = b.height() in 80..220
-                val isWideEnough = b.width() > 500
+                val isWideEnough = b.width() > screenWidth / 2  // more than half screen width
                 val hasText = texts.isNotEmpty()
                 val isNotVoiceMic = texts.none { t ->
                     t.lowercase().let {
                         it.contains("voice") || it.contains("mic") ||
                         it.contains("speech") || it.contains("search youtube") ||
-                        it.contains("search with voice")
+                        it.contains("search with voice") || it.contains("speak now") ||
+                        it.contains("listening") || it.contains("try saying")
                     }
                 }
-                val isInUpperArea = b.top < screenHeight * 0.6
 
-                if (isBelowSearchBar && isNarrowRow && isWideEnough &&
-                    hasText && isNotVoiceMic && isInUpperArea
+                if (isBelowSearchBar && isAboveMicZone && isNarrowRow &&
+                    isWideEnough && hasText && isNotVoiceMic
                 ) {
                     candidates.add(node to b)
                 }
@@ -406,7 +415,6 @@ class AgentAccessibilityService : AccessibilityService() {
         }
 
         // Sort by Y position (top-most first) and return the first one.
-        // This ensures we tap the FIRST suggestion, not a random one.
         return candidates.sortedBy { it.second.top }.firstOrNull()?.first
     }
 
