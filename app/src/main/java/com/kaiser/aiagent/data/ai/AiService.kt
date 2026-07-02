@@ -61,15 +61,16 @@ class AiService {
      * v0.6: streaming with native function calling support.
      * Returns Flow<StreamEvent> — caller handles text, tool calls, and completion.
      *
-     * v0.6.7: readTimeout is now 90 seconds (was 0 = infinite). If Groq
-     * or any provider opens the connection but stops sending data for
-     * 90s, OkHttp throws SocketTimeoutException which surfaces as an
-     * error event instead of hanging forever in "thinking" state.
+     * v0.7.6: readTimeout reduced to 30 seconds (was 90s). The 90s timeout
+     * was too long — users thought the app was frozen. 30s is enough for
+     * any provider's first token; if nothing arrives in 30s, something is
+     * wrong and we should fail fast. The AgentRuntime has a separate 45s
+     * watchdog as a backstop.
      */
     fun streamChat(config: AiConfig, request: AiRequest): Flow<StreamEvent> = flow {
         val client = OkHttpClient.Builder()
-            .connectTimeout(config.connectTimeoutSec, TimeUnit.SECONDS)
-            .readTimeout(90, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)  // v0.7.6: explicit 15s connect timeout
+            .readTimeout(30, TimeUnit.SECONDS)     // v0.7.6: 30s read timeout (was 90s)
             .build()
         val req = buildRequest(config, request.copy(stream = true))
         val channel = Channel<StreamEvent>(Channel.BUFFERED)

@@ -102,11 +102,12 @@ class AgentRuntime(
             while (!streamed && streamAttempts < 3) {
                 streamAttempts++
                 try {
-                    // v0.6.7: hard 2-minute watchdog around the stream.
-                    // Even if the read timeout fails to fire (e.g. the
-                    // provider sends keepalive bytes but no real data),
-                    // this guarantees the iteration can't hang forever.
-                    kotlinx.coroutines.withTimeoutOrNull(120_000L) {
+                    // v0.7.6: reduced watchdog from 120s to 45s. The 120s
+                    // watchdog was too long — combined with the 90s read
+                    // timeout, the agent could appear stuck for 2 minutes
+                    // before failing. 45s is enough for any real response;
+                    // if the stream hasn't completed by then, fail fast.
+                    kotlinx.coroutines.withTimeoutOrNull(45_000L) {
                         repository.streamChatWithTools(messages, toolDefs, onStatus).collect { event ->
                             when (event) {
                                 is StreamEvent.Text -> {
@@ -130,7 +131,7 @@ class AgentRuntime(
                         }
                     } ?: run {
                         // withTimeoutOrNull returned null → timed out
-                        throw AiException("Stream timed out after 120 seconds with no data. " +
+                        throw AiException("Stream timed out after 45 seconds with no data. " +
                             "The AI provider may be overloaded. Try again.")
                     }
                     streamed = true

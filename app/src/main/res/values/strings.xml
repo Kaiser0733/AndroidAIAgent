@@ -38,7 +38,7 @@
 
     <!-- About screen -->
     <string name="about_version_label">Version</string>
-    <string name="about_description">Android AI Agent is a long-term personal assistant project for Android. This is the v0.1 foundation release — the agent itself is not yet functional. The release focuses on a stable, expandable architecture: application shell, update system, remote configuration, logging, and stub modules for future expansion.</string>
+    <string name="about_description">Android AI Agent is a personal assistant that runs on your Android device. It can answer questions, manage files, and control apps via scripted automation. v0.7 adds YouTube script support — search and play videos with a single command. Powered by cloud LLMs (Groq, Gemini, NVIDIA NIM) via native function calling.</string>
     <string name="about_repo_label">Repository</string>
     <string name="about_repo_value">github.com/Kaiser0733/AndroidAIAgent</string>
     <string name="about_license_label">License</string>
