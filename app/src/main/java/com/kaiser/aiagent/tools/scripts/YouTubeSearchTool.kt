@@ -133,8 +133,16 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
                 "Typed '$query' but couldn't submit the search. $submitResult")
         }
 
-        // v0.7.5: After submitting, verify we didn't accidentally open
-        // voice search. Reduced wait from 1.5s to 1s to save time.
+        // v0.7.10: After submitting, verify we didn't accidentally open
+        // voice search. ONLY detect the ACTIVE voice search overlay —
+        // look for "speak now", "listening", or "try saying" which only
+        // appear when the mic is actively listening.
+        //
+        // DO NOT look for "voice search" — that's the mic button's
+        // content description which is ALWAYS present on the search
+        // panel. Checking for it caused a false positive every time,
+        // which called goBack() → home screen → error → AI retried →
+        // infinite loop (search → home → search → home).
         Thread.sleep(1000)
         val openedVoice = AgentAccessibilityController.runTyped("check_voice") { svc ->
             val root = svc.rootInActiveWindow ?: return@runTyped false
@@ -144,8 +152,7 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
                 t.lowercase().let {
                     it.contains("speak now") ||
                     it.contains("listening") ||
-                    it.contains("try saying") ||
-                    it.contains("voice search")
+                    it.contains("try saying")
                 }
             }
         } ?: false
