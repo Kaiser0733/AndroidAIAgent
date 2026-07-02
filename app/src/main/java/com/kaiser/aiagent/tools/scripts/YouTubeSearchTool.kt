@@ -120,7 +120,7 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
         }
 
         // Step 6: Submit the search.
-        // v0.7.2: YouTube has NO submit button — only the keyboard's
+        // v0.7.3: YouTube has NO submit button — only the keyboard's
         // enter key or tapping an autocomplete suggestion works.
         // submitYouTubeSearch tries:
         //   1. ACTION_IME_ENTER (with verification)
@@ -133,6 +133,33 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
         if (submitResult.startsWith("ERROR")) {
             return@withContext ToolResult(false, "",
                 "Typed '$query' but couldn't submit the search. $submitResult")
+        }
+
+        // v0.7.3: After submitting, verify we didn't accidentally open
+        // voice search. Wait 1.5s then check if a voice/mic UI is
+        // showing. If so, press BACK to dismiss it and return error.
+        Thread.sleep(1500)
+        val openedVoice = AgentAccessibilityController.runTyped("check_voice") { svc ->
+            val root = svc.rootInActiveWindow ?: return@runTyped false
+            val texts = mutableListOf<String>()
+            svc.collectTextsPublic(root, texts)
+            texts.any { t ->
+                t.lowercase().let {
+                    it.contains("speak now") ||
+                    it.contains("listening") ||
+                    it.contains("try saying") ||
+                    it.contains("voice search")
+                }
+            }
+        } ?: false
+        if (openedVoice) {
+            // Dismiss the voice search overlay
+            AgentAccessibilityController.run("dismiss_voice") { svc -> svc.goBack() }
+            Thread.sleep(500)
+            return@withContext ToolResult(false, "",
+                "Voice search was accidentally opened after typing '$query'. " +
+                "The autocomplete suggestion tap missed. Please try again — " +
+                "the v0.7.3 stricter filtering should prevent this on retry.")
         }
 
         // Step 7: Poll for results to appear (up to 15s — handles slow internet)

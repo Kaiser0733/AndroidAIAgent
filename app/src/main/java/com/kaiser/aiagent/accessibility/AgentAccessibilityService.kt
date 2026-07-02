@@ -352,13 +352,25 @@ class AgentAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * v0.7.2: Finds the first autocomplete suggestion on YouTube's
-     * search panel. Suggestions are tappable rows below the search
-     * bar, each containing text + a magnifying glass icon.
+     * v0.7.3: Finds the first autocomplete suggestion on YouTube's
+     * search panel. VERY STRICT filtering to avoid tapping the mic
+     * or voice search button (the v0.7.2 bug).
      *
-     * Returns the AccessibilityNodeInfo of the suggestion row, or null.
+     * A suggestion row must satisfy ALL of:
+     *  - bounds.top > 150px (below the search bar, which is at Y 30-60)
+     *  - bounds.height() in 80..220 (suggestion rows are narrow;
+     *    the search bar + mic row is taller)
+     *  - bounds.width() > 500 (full-width row, not a small icon)
+     *  - has text content
+     *  - text does NOT contain "voice", "mic", "speech", "search youtube"
+     *  - text does NOT exactly equal the typed query (that's the search
+     *    bar itself echoing back)
+     *  - is in the upper 60% of screen (suggestions are right below bar)
      */
     private fun findFirstAutocompleteSuggestion(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        val screenHeight = resources.displayMetrics.heightPixels
+        val candidates = mutableListOf<Pair<AccessibilityNodeInfo, android.graphics.Rect>>()
+
         val queue = ArrayDeque<AccessibilityNodeInfo>()
         queue.addLast(root)
         while (queue.isNotEmpty()) {
@@ -368,30 +380,34 @@ class AgentAccessibilityService : AccessibilityService() {
                 collectTexts(node, texts)
                 val b = android.graphics.Rect()
                 node.getBoundsInScreen(b)
-                // A suggestion row: below the search bar, reasonable height,
-                // has text content, not the mic/voice button
-                val isBelowSearchBar = b.top > 200
-                val isReasonableHeight = b.height() in 80..300
+
+                val isBelowSearchBar = b.top > 150
+                val isNarrowRow = b.height() in 80..220
+                val isWideEnough = b.width() > 500
                 val hasText = texts.isNotEmpty()
-                val isNotVoiceMic = texts.none {
-                    it.lowercase().contains("voice") ||
-                    it.lowercase().contains("mic") ||
-                    it.lowercase().contains("speech")
-                }
-                if (isBelowSearchBar && isReasonableHeight && hasText && isNotVoiceMic) {
-                    // Verify this is actually a suggestion by checking it's
-                    // in the upper half of the screen (suggestions are right
-                    // below the search bar)
-                    if (b.top < resources.displayMetrics.heightPixels / 2) {
-                        return node
+                val isNotVoiceMic = texts.none { t ->
+                    t.lowercase().let {
+                        it.contains("voice") || it.contains("mic") ||
+                        it.contains("speech") || it.contains("search youtube") ||
+                        it.contains("search with voice")
                     }
+                }
+                val isInUpperArea = b.top < screenHeight * 0.6
+
+                if (isBelowSearchBar && isNarrowRow && isWideEnough &&
+                    hasText && isNotVoiceMic && isInUpperArea
+                ) {
+                    candidates.add(node to b)
                 }
             }
             for (i in 0 until node.childCount) {
                 node.getChild(i)?.let { queue.addLast(it) }
             }
         }
-        return null
+
+        // Sort by Y position (top-most first) and return the first one.
+        // This ensures we tap the FIRST suggestion, not a random one.
+        return candidates.sortedBy { it.second.top }.firstOrNull()?.first
     }
 
     /**
@@ -506,6 +522,11 @@ class AgentAccessibilityService : AccessibilityService() {
             }
         }
         return results
+    }
+
+    /** Recursively collects all non-blank text from a node and its descendants. */
+    fun collectTextsPublic(node: AccessibilityNodeInfo, out: MutableList<String>) {
+        collectTexts(node, out)
     }
 
     /** Recursively collects all non-blank text from a node and its descendants. */
