@@ -359,37 +359,96 @@ class AgentAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Step 3: Tap the keyboard's Enter key by coordinates.
-        // On every Android keyboard (Gboard, Samsung, SwiftKey, etc.),
-        // the Enter/Search key is in the bottom-right corner of the
-        // screen when a search field is focused. Tapping there presses
-        // Enter regardless of which keyboard is active.
-        val w = resources.displayMetrics.widthPixels
-        val h = resources.displayMetrics.heightPixels
-        // Enter key is roughly at (90% width, 92% height) — adjust slightly
-        // to be in the centre of the key, not the edge.
-        val enterX = w * 0.88f
-        val enterY = h * 0.92f
-        if (dispatchTap(enterX, enterY)) {
+        // Step 3: Find and tap the keyboard's Enter/Search key via the
+        // accessibility tree.
+        // v0.7.9: Coordinate guessing doesn't work — keyboard layout varies
+        // by device, orientation, and keyboard app. Instead, walk ALL
+        // windows (including the keyboard window) and look for a node that:
+        //   - Is in the bottom half of the screen (keyboard area)
+        //   - Is clickable
+        //   - Has a label containing "search", "go", "enter", "done", or
+        //     "submit" (the IME action label)
+        //   - Does NOT contain "voice", "mic", "speech" (excludes the mic)
+        // The keyboard's Enter key is always labeled with the IME action
+        // the app set on the field — for YouTube search, it's "Search".
+        val enterKeyResult = findAndTapKeyboardEnterKey()
+        if (enterKeyResult.startsWith("OK")) {
             try { Thread.sleep(1500) } catch (e: InterruptedException) {}
-            // Verify the search submitted
-            val root4 = rootInActiveWindow
-            if (root4 != null) {
-                val texts = mutableListOf<String>()
-                collectTexts(root4, texts)
-                val stillOnSearchPanel = texts.any {
-                    it.contains("Search YouTube", ignoreCase = true)
-                }
-                if (!stillOnSearchPanel) {
-                    return "OK submitted (tapped keyboard Enter at ${enterX.toInt()},${enterY.toInt()})"
-                }
-            }
-            // Even if we can't verify, the tap was dispatched. Return OK
-            // optimistically — the results poll will catch it if it failed.
-            return "OK submitted (tapped keyboard Enter at ${enterX.toInt()},${enterY.toInt()})"
+            return enterKeyResult
         }
 
-        return "ERROR: couldn't submit search. IME enter failed and keyboard Enter tap failed."
+        // Step 4: Last resort — tap by coordinates, but use a safer region.
+        // Only tap in the 70-85% height range (keyboard middle area),
+        // NEVER below 90% (floating mic on tablets).
+        val w = resources.displayMetrics.widthPixels
+        val h = resources.displayMetrics.heightPixels
+        val enterX = w * 0.80f
+        val enterY = h * 0.80f
+        if (dispatchTap(enterX, enterY)) {
+            try { Thread.sleep(1500) } catch (e: InterruptedException) {}
+            return "OK submitted (tapped keyboard area at ${enterX.toInt()},${enterY.toInt()})"
+        }
+
+        return "ERROR: couldn't submit search. $enterKeyResult"
+    }
+
+    /**
+     * v0.7.9: Walks ALL accessibility windows (including the keyboard
+     * window) to find the Enter/Search action key. The keyboard's Enter
+     * key is exposed as a clickable node with a label matching the IME
+     * action (Search, Go, Done, etc.).
+     *
+     * This is the ONLY reliable way to press Enter — coordinate guessing
+     * fails on different keyboards (Gboard vs Samsung vs SwiftKey) and
+     * different screen sizes (phone vs tablet).
+     */
+    private fun findAndTapKeyboardEnterKey(): String {
+        val labels = listOf("search", "go", "enter", "done", "submit", "send", "next")
+
+        // Walk all windows — the keyboard is a separate window from the app.
+        val windows = try { windows } catch (e: Exception) { null } ?: return "ERROR: couldn't get windows"
+        val h = resources.displayMetrics.heightPixels
+        val keyboardTop = h / 2  // keyboard is in the bottom half
+
+        for (window in windows) {
+            val root = window.root ?: continue
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.addLast(root)
+            while (queue.isNotEmpty()) {
+                val node = queue.removeFirst()
+                if (node.isClickable) {
+                    val texts = mutableListOf<String>()
+                    collectTexts(node, texts)
+                    val b = android.graphics.Rect()
+                    node.getBoundsInScreen(b)
+                    // Must be in the bottom half of screen (keyboard area)
+                    val inKeyboardArea = b.top >= keyboardTop
+                    // Must have a label matching an IME action
+                    val hasImeLabel = texts.any { t ->
+                        val low = t.lowercase()
+                        labels.any { l -> low.contains(l) } &&
+                        !low.contains("voice") && !low.contains("mic") &&
+                        !low.contains("speech") && !low.contains("cancel")
+                    }
+                    if (inKeyboardArea && hasImeLabel) {
+                        // Tap the centre of this node
+                        val cx = (b.left + b.right) / 2f
+                        val cy = (b.top + b.bottom) / 2f
+                        if (dispatchTap(cx, cy)) {
+                            return "OK submitted (tapped IME Enter key '${texts.firstOrNull()}' at ${cx.toInt()},${cy.toInt()})"
+                        }
+                        // Try performAction as fallback
+                        if (node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            return "OK submitted (clicked IME Enter key '${texts.firstOrNull()}')"
+                        }
+                    }
+                }
+                for (i in 0 until node.childCount) {
+                    node.getChild(i)?.let { queue.addLast(it) }
+                }
+            }
+        }
+        return "ERROR: no IME Enter key found in keyboard windows"
     }
 
     /**
