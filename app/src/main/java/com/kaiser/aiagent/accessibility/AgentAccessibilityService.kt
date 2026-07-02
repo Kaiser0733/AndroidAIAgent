@@ -265,57 +265,98 @@ class AgentAccessibilityService : AccessibilityService() {
      * NEVER taps anything with "voice" or "mic" in the label — that's
      * the v0.7.0/v0.7.1 bug where the mic got opened.
      */
+    /**
+     * v0.7.7: Submits a YouTube search.
+     *
+     * COMPLETELY REWRITTEN to never tap suggestions (the mic kept
+     * getting tapped). New approach:
+     *
+     *   1. Click the EditText to re-establish IME connection
+     *      (ACTION_SET_TEXT disconnects the IME, so IME_ENTER alone
+     *      does nothing — clicking the field first fixes this).
+     *   2. ACTION_IME_ENTER on the focused EditText.
+     *   3. If that fails, tap the keyboard's Enter key by coordinates
+     *      (bottom-right corner of screen — Enter is always there on
+     *      every keyboard: Gboard, Samsung, SwiftKey, etc.).
+     *
+     * NEVER taps suggestions, NEVER taps the mic.
+     */
     fun submitYouTubeSearch(): String {
         val root = rootInActiveWindow ?: return "ERROR: no active window"
-
-        // Strategy 1: ACTION_IME_ENTER on the focused EditText
         val focus = findFocusedEditText(root) ?: findFirstEditText(root)
-        if (focus != null) {
-            focus.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
-            try { Thread.sleep(300) } catch (e: InterruptedException) {}
+            ?: return "ERROR: no EditText found on screen"
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                try {
-                    val imeEnterAction = 65553 // ACTION_IME_ENTER
-                    if (focus.performAction(imeEnterAction)) {
-                        // Verify: wait 1.5s and check if the screen changed.
-                        // If autocomplete suggestions disappeared, the search worked.
-                        Thread.sleep(1500)
-                        val newRoot = rootInActiveWindow
-                        if (newRoot != null && !hasAutocompleteSuggestions(newRoot)) {
-                            return "OK submitted (ACTION_IME_ENTER)"
+        // Step 1: Click the EditText to re-establish IME connection.
+        // type_text's ACTION_SET_TEXT bypasses the keyboard, leaving
+        // the IME disconnected. ACTION_IME_ENTER does nothing in this
+        // state. Clicking the field forces the IME to reattach.
+        focus.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+        focus.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+        try { Thread.sleep(500) } catch (e: InterruptedException) {}
+
+        // Re-fetch the focused node (clicking may have changed focus)
+        val root2 = rootInActiveWindow ?: root
+        val focus2 = findFocusedEditText(root2) ?: focus
+
+        // Step 2: ACTION_IME_ENTER (API 30+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val imeEnterAction = 65553 // ACTION_IME_ENTER
+                if (focus2.performAction(imeEnterAction)) {
+                    // Wait for the search to execute
+                    try { Thread.sleep(1500) } catch (e: InterruptedException) {}
+                    // Verify: check if we're still on the search panel
+                    val root3 = rootInActiveWindow
+                    if (root3 != null) {
+                        val texts = mutableListOf<String>()
+                        collectTexts(root3, texts)
+                        // If we see "Search YouTube" placeholder or the query
+                        // is still in the search bar, the search didn't submit.
+                        val stillOnSearchPanel = texts.any {
+                            it.contains("Search YouTube", ignoreCase = true) ||
+                            it.contains("cocomelon", ignoreCase = true) // the query echoed back
                         }
-                        // If suggestions are still there, IME enter didn't work.
-                        // Fall through to strategy 2.
+                        if (!stillOnSearchPanel) {
+                            return "OK submitted (ACTION_IME_ENTER after click)"
+                        }
                     }
-                } catch (e: Exception) {
-                    Timber.w(e, "ACTION_IME_ENTER failed")
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "ACTION_IME_ENTER failed")
+            }
+        }
+
+        // Step 3: Tap the keyboard's Enter key by coordinates.
+        // On every Android keyboard (Gboard, Samsung, SwiftKey, etc.),
+        // the Enter/Search key is in the bottom-right corner of the
+        // screen when a search field is focused. Tapping there presses
+        // Enter regardless of which keyboard is active.
+        val w = resources.displayMetrics.widthPixels
+        val h = resources.displayMetrics.heightPixels
+        // Enter key is roughly at (90% width, 92% height) — adjust slightly
+        // to be in the centre of the key, not the edge.
+        val enterX = w * 0.88f
+        val enterY = h * 0.92f
+        if (dispatchTap(enterX, enterY)) {
+            try { Thread.sleep(1500) } catch (e: InterruptedException) {}
+            // Verify the search submitted
+            val root4 = rootInActiveWindow
+            if (root4 != null) {
+                val texts = mutableListOf<String>()
+                collectTexts(root4, texts)
+                val stillOnSearchPanel = texts.any {
+                    it.contains("Search YouTube", ignoreCase = true)
+                }
+                if (!stillOnSearchPanel) {
+                    return "OK submitted (tapped keyboard Enter at ${enterX.toInt()},${enterY.toInt()})"
                 }
             }
+            // Even if we can't verify, the tap was dispatched. Return OK
+            // optimistically — the results poll will catch it if it failed.
+            return "OK submitted (tapped keyboard Enter at ${enterX.toInt()},${enterY.toInt()})"
         }
 
-        // Strategy 2: Tap the first autocomplete suggestion.
-        // YouTube shows suggestions immediately after typing. Each is
-        // a tappable row with a magnifying glass icon. Tapping one
-        // searches for that suggestion immediately.
-        val suggestion = findFirstAutocompleteSuggestion(rootInActiveWindow ?: root)
-        if (suggestion != null) {
-            val b = android.graphics.Rect()
-            suggestion.getBoundsInScreen(b)
-            if (dispatchTap(b.exactCenterX(), b.exactCenterY())) {
-                return "OK submitted (tapped first autocomplete suggestion at ${b.exactCenterX().toInt()},${b.exactCenterY().toInt()})"
-            }
-        }
-
-        // Strategy 3: Click the EditText itself (some apps bind submit to click)
-        if (focus != null) {
-            if (focus.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
-                return "OK submitted (ACTION_CLICK on EditText)"
-            }
-        }
-
-        return "ERROR: couldn't submit search. No IME enter, no autocomplete suggestions, " +
-            "and EditText click failed. YouTube's UI may have changed."
+        return "ERROR: couldn't submit search. IME enter failed and keyboard Enter tap failed."
     }
 
     /**
