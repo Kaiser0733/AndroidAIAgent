@@ -79,9 +79,9 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
 
         context.startActivity(launchIntent)
 
-        // Step 2: Wait for YouTube window to appear (adaptive — up to 12s)
+        // Step 2: Wait for YouTube window to appear (adaptive — up to 10s)
         val windowReady = AgentAccessibilityController.runTyped("youtube_open") { svc ->
-            svc.pollForCondition(12_000, 500) {
+            svc.pollForCondition(10_000, 500) {
                 svc.activeWindowPackage() == "com.google.android.youtube" &&
                 svc.interactiveElementCount() >= 3
             }
@@ -89,7 +89,7 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
 
         if (!windowReady) {
             return@withContext ToolResult(false, "",
-                "YouTube didn't open within 12 seconds. It may not be installed or the device is too slow.")
+                "YouTube didn't open within 10 seconds. It may not be installed or the device is too slow.")
         }
 
         // Step 3: Tap the search icon
@@ -108,7 +108,7 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
         }
 
         // Step 4: Wait for search panel + text field to appear
-        Thread.sleep(1000)
+        Thread.sleep(800)
 
         // Step 5: Type the query
         val typeResult = AgentAccessibilityController.run("type_query") { svc ->
@@ -120,13 +120,8 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
         }
 
         // Step 6: Submit the search.
-        // v0.7.3: YouTube has NO submit button — only the keyboard's
+        // v0.7.4: YouTube has NO submit button — only the keyboard's
         // enter key or tapping an autocomplete suggestion works.
-        // submitYouTubeSearch tries:
-        //   1. ACTION_IME_ENTER (with verification)
-        //   2. Tap first autocomplete suggestion (most reliable)
-        //   3. ACTION_CLICK on EditText (last resort)
-        // NEVER taps voice/mic.
         val submitResult = AgentAccessibilityController.run("submit_search") { svc ->
             svc.submitYouTubeSearch()
         }
@@ -135,10 +130,9 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
                 "Typed '$query' but couldn't submit the search. $submitResult")
         }
 
-        // v0.7.3: After submitting, verify we didn't accidentally open
-        // voice search. Wait 1.5s then check if a voice/mic UI is
-        // showing. If so, press BACK to dismiss it and return error.
-        Thread.sleep(1500)
+        // v0.7.5: After submitting, verify we didn't accidentally open
+        // voice search. Reduced wait from 1.5s to 1s to save time.
+        Thread.sleep(1000)
         val openedVoice = AgentAccessibilityController.runTyped("check_voice") { svc ->
             val root = svc.rootInActiveWindow ?: return@runTyped false
             val texts = mutableListOf<String>()
@@ -155,16 +149,16 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
         if (openedVoice) {
             // Dismiss the voice search overlay
             AgentAccessibilityController.run("dismiss_voice") { svc -> svc.goBack() }
-            Thread.sleep(500)
+            Thread.sleep(400)
             return@withContext ToolResult(false, "",
                 "Voice search was accidentally opened after typing '$query'. " +
-                "The autocomplete suggestion tap missed. Please try again — " +
-                "the v0.7.3 stricter filtering should prevent this on retry.")
+                "Please try again.")
         }
 
-        // Step 7: Poll for results to appear (up to 15s — handles slow internet)
+        // Step 7: Poll for results to appear (up to 10s — handles slow internet)
+        // v0.7.5: reduced from 15s to 10s to fit within the 60s tool timeout.
         val results = AgentAccessibilityController.runTyped("parse_results") { svc ->
-            svc.pollForCondition(15_000, 500) {
+            svc.pollForCondition(10_000, 500) {
                 svc.parseYouTubeResults().isNotEmpty()
             }
             svc.parseYouTubeResults()

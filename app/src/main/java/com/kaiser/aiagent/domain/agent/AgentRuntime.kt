@@ -201,14 +201,23 @@ class AgentRuntime(
                 for (tc in toolCalls) {
                     onStatus?.invoke("Running: ${tc.function.name}")
                     val call = ToolCall(tool = tc.function.name, arguments = tc.function.arguments)
+                    // v0.7.5: script tools (youtube_*) legitimately need more
+                    // time — they open apps, wait for windows, poll for results.
+                    // Old 30s timeout killed youtube_search mid-execution (it
+                    // can take 31s+ on slow devices), leaving the agent stuck.
+                    val toolTimeoutMs = if (tc.function.name.startsWith("youtube_")) 60_000L else 30_000L
                     val result: ToolResult = try {
-                        kotlinx.coroutines.withTimeout(30_000L) {
+                        kotlinx.coroutines.withTimeout(toolTimeoutMs) {
                             toolExecutor.execute(call, conversationId) { name, r ->
                                 recordToolCall(name, r)
                             }
                         }
                     } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                        ToolResult(false, "", "Tool '${tc.function.name}' timed out after 30s.")
+                        ToolResult(false, "", "Tool '${tc.function.name}' timed out after ${toolTimeoutMs/1000}s.")
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // v0.7.5: catch ALL cancellation (not just Timeout) so
+                        // a cancelled tool doesn't kill the whole turn.
+                        ToolResult(false, "", "Tool '${tc.function.name}' was cancelled: ${e.message ?: "unknown"}")
                     }
 
                     // v0.6.5: track whether the last tool was read_screen.
