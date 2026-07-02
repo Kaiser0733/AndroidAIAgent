@@ -13,8 +13,8 @@ android {
         applicationId = "com.kaiser.aiagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 57
-        versionName = "0.7.7"
+        versionCode = 58
+        versionName = "0.7.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

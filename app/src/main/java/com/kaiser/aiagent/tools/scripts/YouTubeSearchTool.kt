@@ -92,19 +92,22 @@ class YouTubeSearchTool(private val context: Context) : AgentTool {
                 "YouTube didn't open within 10 seconds. It may not be installed or the device is too slow.")
         }
 
-        // Step 3: Tap the search icon
-        val tapResult = AgentAccessibilityController.run("tap_search") { svc ->
-            svc.tapText("Search", -1)
+        // Step 3: Tap the search icon.
+        // v0.7.8: COMPLETELY STOP USING tapText("Search") — it keeps
+        // matching the mic icon (content description "Search with voice"
+        // or even just "Search"). Instead, tap by COORDINATES.
+        //
+        // On every YouTube version (phone + tablet, portrait + landscape),
+        // the search icon is in the TOP-RIGHT corner of the home screen.
+        // We tap at (95% width, 5% height) which is always the search icon
+        // area. The mic is NOT on the home screen — it only appears inside
+        // the search panel, so this tap can never hit the mic.
+        val tapResult = AgentAccessibilityController.run("tap_search_icon") { svc ->
+            svc.tapSearchIconByPosition()
         }
         if (tapResult.startsWith("ERROR")) {
-            // Fallback: try "Search YouTube"
-            val fallback = AgentAccessibilityController.run("tap_search_fallback") { svc ->
-                svc.tapText("Search YouTube", -1)
-            }
-            if (fallback.startsWith("ERROR")) {
-                return@withContext ToolResult(false, "",
-                    "Couldn't find the search button on YouTube's home screen. $tapResult")
-            }
+            return@withContext ToolResult(false, "",
+                "Couldn't tap the search icon. $tapResult")
         }
 
         // Step 4: Wait for search panel + text field to appear

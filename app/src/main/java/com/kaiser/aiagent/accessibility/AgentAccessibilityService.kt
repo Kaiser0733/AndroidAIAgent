@@ -266,6 +266,39 @@ class AgentAccessibilityService : AccessibilityService() {
      * the v0.7.0/v0.7.1 bug where the mic got opened.
      */
     /**
+     * v0.7.8: Taps the YouTube search icon by screen position.
+     *
+     * On EVERY YouTube version (phone + tablet, portrait + landscape),
+     * the search icon is in the TOP-RIGHT corner of the home screen.
+     * We tap at (95% width, 5% height).
+     *
+     * This COMPLETELY REPLACES tapText("Search") for opening the search
+     * panel. The old approach kept matching the mic icon because:
+     *  - The mic's content description is sometimes "Search with voice"
+     *    (substring match on "search")
+     *  - The mic's content description is sometimes just "Search" (exact
+     *    match, same as the real search icon)
+     *  - No amount of text-based filtering could reliably distinguish
+     *    them because YouTube is inconsistent about the mic's label
+     *
+     * Tapping by position is deterministic — the search icon is ALWAYS
+     * top-right on the home screen. The mic is NOT on the home screen;
+     * it only appears inside the search panel.
+     */
+    fun tapSearchIconByPosition(): String {
+        val w = resources.displayMetrics.widthPixels
+        val h = resources.displayMetrics.heightPixels
+        // Top-right corner: 95% width, 5% height.
+        // On a 1200px-wide tablet, this is (1140, 60) — right in the
+        // search icon area. On a 1080px phone, (1026, 54).
+        val x = w * 0.95f
+        val y = h * 0.05f
+        val ok = dispatchTap(x, y)
+        return if (ok) "OK tapped search icon at (${x.toInt()},${y.toInt()})"
+        else "ERROR: dispatchTap failed at (${x.toInt()},${y.toInt()})"
+    }
+
+    /**
      * v0.7.7: Submits a YouTube search.
      *
      * COMPLETELY REWRITTEN to never tap suggestions (the mic kept
